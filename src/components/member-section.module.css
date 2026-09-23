@@ -4,6 +4,8 @@
   flex-direction: column;
   min-height: 100dvh;
   overflow: hidden;
+  /* 逐屏吸附锚定介绍区中心（AC-7，仅在启用 scroll-snap-type 的断点生效） */
+  scroll-snap-align: center;
   /* 立绘半身裁切：cover 基础上按顶部锚点放大（设计 §2.5） */
   --art-zoom: 1.3;
   --art-pos: 50% 0%;

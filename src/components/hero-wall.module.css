@@ -20,6 +20,14 @@
   transition: filter 300ms ease-out;
 }
 
+/* 覆盖式站内锚点：铺满面板承接点击（面板内除徽章外的点击都落到此处） */
+.panelLink {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+}
+
 .art {
   object-fit: cover;
   object-position: top;
@@ -30,6 +38,7 @@
 .meta {
   position: absolute;
   inset: auto 0 4px 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: var(--mantine-spacing-xs);
@@ -40,6 +49,17 @@
     color-mix(in srgb, var(--mantine-color-night287-9) 85%, transparent),
     transparent
   );
+  /* meta 叠在覆盖式锚点之上：默认点击穿透到锚点（点名字/渐变也进介绍区） */
+  pointer-events: none;
+}
+
+/* 徽章槽与 meta 同为不接管命中：命中链 .badge(none)/.badgeSlot(none)/.meta(none)
+   整条穿透到下方覆盖式锚点，非交互态徽章不产生点击死区（R4）；
+   开播徽章由 live-badge 的 .living 显式 auto 成为命中目标（祖先 none 不阻止子树显式 auto）。
+   槽保持拉伸（勿 flex-start）：为 .badge 的 max-width:100% 提供确定基准，
+   单行长标题走 text-overflow 截尾而非被面板边缘硬裁（R5-2） */
+.badgeSlot {
+  pointer-events: none;
 }
 
 .name {
@@ -57,6 +77,11 @@
 .bar {
   position: absolute;
   inset: auto 0 0 0;
+  /* 层叠在覆盖式锚点与 meta 之上，恢复一期「代表色指示条恒可见」的视觉；
+     bar 位于底部 4px，与 meta 不重叠。纯装饰元素：关闭指针事件，
+     条带点击穿透到 a.panelLink，避免成为点击死区（R2） */
+  z-index: 3;
+  pointer-events: none;
   height: 4px;
   background: var(--member-accent);
 }

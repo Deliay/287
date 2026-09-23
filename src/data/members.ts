@@ -22,6 +22,10 @@ export interface Member {
   imagePositionMobileDetail?: string;
   /** B 站主页 UID 直链 */
   bilibili: string;
+  /** 直播状态接口路径（需求 §7），如 /api/live/viridis/status；base 由 live-status.ts 按环境拼接 */
+  liveStatusUrl: string;
+  /** 直播入口链接（开播时徽章跳转目标，待需求 T1 确认；确认前默认同 bilibili） */
+  liveUrl?: string;
 }
 
 export const members: Member[] = [
@@ -39,6 +43,7 @@ export const members: Member[] = [
     imagePositionMobileHero: "-15% 5%",
     imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/1891335475",
+    liveStatusUrl: "/api/live/viridis/status",
   },
   {
     id: "komichi",
@@ -54,6 +59,7 @@ export const members: Member[] = [
     imagePositionMobileHero: "0% 10%",
     imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/1512246445",
+    liveStatusUrl: "/api/live/komichi/status",
   },
   {
     id: "chu2u",
@@ -69,6 +75,7 @@ export const members: Member[] = [
     imagePositionMobileHero: "-15% 0%",
     imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/2138961136",
+    liveStatusUrl: "/api/live/chu2u/status",
   },
   {
     id: "sumire",
@@ -84,5 +91,6 @@ export const members: Member[] = [
     imagePositionMobileHero: "-35% 3%",
     imagePositionMobileDetail: "-50% 0%",
     bilibili: "https://space.bilibili.com/1150976664",
+    liveStatusUrl: "/api/live/status",
   },
 ];
