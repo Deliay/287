@@ -100,8 +100,12 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const seekTokenRef = useRef(0);
   /** 最近一次 seek 目标（重试按钮用） */
   const lastSeekRef = useRef<number | null>(null);
-  /** 续播判定上下文：仅在「落位到目标邻域 / 跳变落位 / seeked 事件」时消费（审核 R1） */
-  const seekResumeRef = useRef<{ token: number; from: number | null; target: number } | null>(null);
+  /**
+   * 本次 seek 的落位上下文（审核 R1/R5）：`applied` 表示 performSeek 已生效，
+   * 只有生效之后的信号才算「本次真实落位」——飞行期旧播放推进（哪怕已进目标邻域）
+   * 与上一次 seek 的残留 clamp/seeked 一律不得消费本 latch。
+   */
+  const seekResumeRef = useRef<{ token: number; target: number; applied: boolean } | null>(null);
   /** 上一次媒体采样时间：用于识别单次采样内的跳变落位（区别于旧播放的连续推进） */
   const lastSampleRef = useRef<number | null>(null);
 
@@ -231,14 +235,16 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
 
   /**
    * 真实恢复落位：解除看门狗并收敛 seek 中态。
-   * 仅由「目标邻域 / 采样跳变 / seeked 事件」三条真实恢复信号调用（审核 R1），
-   * seek 途中旧播放的连续推进绝不会走到这里。
+   * 三条信号（目标邻域 / 采样跳变 / seeked）必须同时满足：代次属于本次 seek、
+   * 且 performSeek 已生效（`applied`）——飞行期一律不消费（审核 R5-a/b）。
    */
   const landResume = useCallback(() => {
     const watchdog = watchdogRef.current;
     const resume = seekResumeRef.current;
-    if (!watchdog || !resume || resume.token !== seekTokenRef.current) return;
-    watchdog.disarm();
+    if (!watchdog || !resume) return;
+    if (resume.token !== seekTokenRef.current) return;
+    if (!resume.applied) return; // 尚未生效：不是本次 seek 的真实落位
+    watchdog.disarm(); // 终局解除（disposed），迟到的 arm 不会复活
     watchdogRef.current = null;
     seekResumeRef.current = null;
     setSeeking(false);
@@ -275,11 +281,16 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         return ranges;
       });
 
-      // 续播判定（审核 R1）：只认「真实落位」——
+      // 续播判定（审核 R1/R5）：只认「本次 seek 生效后的真实落位」——
       //  a) 落位到目标邻域（±1s）；b) 单次采样内跳变（seek 落位 vs 旧播放连续推进）。
-      // 旧播放的正常推进（位移小且渐进）不得解除中态/看门狗。
+      //  applied=false（网络/扫描飞行期）时一律不消费，旧播放哪怕推进到目标邻域也不解除。
       const resume = seekResumeRef.current;
-      if (resume && resume.token === seekTokenRef.current && watchdogRef.current) {
+      if (
+        resume &&
+        resume.token === seekTokenRef.current &&
+        resume.applied &&
+        watchdogRef.current
+      ) {
         const previous = lastSampleRef.current;
         const nearTarget = Math.abs(media.currentTime - resume.target) <= SEEK_LAND_TOLERANCE;
         const jumped =
@@ -292,7 +303,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     [file.size, landResume],
   );
 
-  /** 补丁 directSeek 落位后浏览器触发的 `seeked`：最可靠的「真实恢复」信号（审核 R1）。 */
+  /** 补丁 directSeek 落位后的 `seeked`：仅在本次 seek 已生效时消费（飞行期的残留 seeked 属上一次 seek，审核 R5-a）。 */
   const handleSeeked = useCallback(() => {
     landResume();
   }, [landResume]);
@@ -340,7 +351,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       setSeekError(null);
       setSeeking(true);
       const media = videoRef.current;
-      seekResumeRef.current = { token, from: media ? media.currentTime : null, target: offsetSeconds };
+      seekResumeRef.current = { token, target: offsetSeconds, applied: false };
       lastSampleRef.current = media ? media.currentTime : null;
 
       const watchdog = new SeekWatchdog(() => {
@@ -350,8 +361,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         setSeeking(false);
         setSeekError("seek 超时：15 秒内未恢复播放");
       });
-      // 登记进 watchdogRef：续播/卸载路径据此可靠解除（审核 P1）
+      // 登记进 watchdogRef 并**发起即武装**：覆盖网络扫描全阶段，
+      // Range 请求挂起也能在 15s 内显性超时（审核 R5-c）；任何结束路径 disarm 为终局（审核 R5-1）
       watchdogRef.current = watchdog;
+      watchdog.arm();
 
       void performSeekFn({
         video: media,
@@ -368,6 +381,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           if (seekTokenRef.current !== token) return;
           watchdog.disarm();
           if (watchdogRef.current === watchdog) watchdogRef.current = null;
+          seekResumeRef.current = null;
           setSeeking(false);
           setSeekError(reason);
         },
@@ -375,10 +389,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       }).then((ok) => {
         if (seekTokenRef.current !== token) return;
         if (ok) {
-          // 成功分支：已缓冲路径会同步落位到目标邻域 → 立即收敛；
-          // 未缓冲路径的落位点可能偏离目标（关键帧对齐常态），交给 seeked / 跳变信号收敛（审核 R1）
+          // 生效标记：只有 performSeek 成功之后的落位信号才可消费（审核 R5-a）
+          const latch = seekResumeRef.current;
+          if (latch && latch.token === token) latch.applied = true;
+          // 已缓冲路径同步落位到目标邻域 → 立即收敛；
+          // 未缓冲路径落位点可能偏离目标（关键帧对齐常态），交给生效后的 seeked / 跳变信号收敛（审核 R1）
           const media2 = videoRef.current;
-          if (media2 && Math.abs(media2.currentTime - offsetSeconds) <= SEEK_LAND_TOLERANCE) {
+          if (latch && media2 && Math.abs(media2.currentTime - offsetSeconds) <= SEEK_LAND_TOLERANCE) {
             landResume();
           }
           return;
@@ -386,6 +403,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         // performSeek 返回 false 但未回调 onFailed 时兜底显性报错（同样受代次保护）
         watchdog.disarm();
         if (watchdogRef.current === watchdog) watchdogRef.current = null;
+        seekResumeRef.current = null;
         setSeeking(false);
         setSeekError((previous) => previous ?? "seek 失败：无法跳转到该时间点");
       });

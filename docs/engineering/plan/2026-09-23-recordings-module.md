@@ -58,6 +58,8 @@
 - 对应验收：AC-3、AC-8（注册表存活部分）。
 - 预计：2.5h。
 
+- **第三轮返工修复（2026-09-24 · 次要12）**：删除注册表中只自增自减、从未被消费的 `creating` 死状态（并发/就绪判定实际由 `lanes map` 与 `readyPending` 承担）；同步改写对应用例名与断言对象为「同步抛错的工厂标记该路 error 且不阻塞后续 play（lanes map 语义）」，消除测试名与实现脱节。
+
 ### T4 悬浮播放组件 `src/features/recordings/live-audio/floating-audio-player.tsx` + `src/app/layout.tsx` ✅
 
 - 产出：`FloatingAudioPlayer`（Client Component），`useSyncExternalStore` 订阅注册表；隐藏媒体元素宿主（所有 lane 的 `<video>` 挂载于此，root layout 内不随路由卸载——跨页面不断流的关键，技术方案 §3.1）；展开态（每路成员色块+名/状态/音量/停止 + 全部停止）与迷你条互切；0 路时不渲染；移动端底部全宽 + 安全区适配（CSS Module + postcss-preset-mantine 断点）。`layout.tsx` 在 `MantineProvider` 内挂载。
@@ -132,6 +134,8 @@
 
 - **第二轮返工修复（2026-09-24 · 次要2）**：`windowBounds` 在终点未知时不再以 `recordStart + 12h` 作绝对上界（12h 只约束**单次查询区间**，单窗恒 10min），否则未知终点且录制 >12h 时 index ≥ 72 的窗口 `endMs ≤ startMs` 会被静默拉空。红测试：`recordings-replay-windows`「windowBounds 起止与 12h 契约」。
 
+- **第三轮返工修复（2026-09-24 · 次要13）**：删除 `replay-windows.ts` 的 `MAX_RANGE_MS`——其注释仍写着次要2 已废弃的「窗口终点未知时的兜底上界」语义，且与 `api.ts` 的 `MAX_QUERY_RANGE_MS` 重复；12h 现在只存在于 `api.ts`（单次查询区间钳制），单窗口宽度恒为 10min，测试改断言 `endMs - startMs === WINDOW_MS`。
+
 ### T10 弹幕窗口加载 `src/features/recordings/replay/replay-events.ts` ✅
 
 - 产出：`useReplayEvents(roomId, bounds)`：10 分钟窗口增量拉取 `fetchLiveEvents`（遵守区间 ≤12h、pageSize ≤100，页内翻页拉全），`Map` 缓存窗口、`AbortController` 竞态控制、窗口过半预取下一窗；`eventsFor(offsetMs)` 返回当前及相邻窗口去重升序事件。
@@ -145,6 +149,8 @@
 - 预计：2h。
 
 - **第二轮返工修复（2026-09-24 · 次要3）**：翻页判定改为「页不满即末页 / `total>0` 且已满即停」（`total` 缺失或为 0 时不再首页即截断）；触及 `MAX_WINDOW_PAGES` 上限置 `error` 显性失败而非静默截断；`inflight` 清理按 controller 归属比对，被取代的旧请求不会误删新请求的在途记录；`startMs` 非法（NaN）视为禁用取数（不再被吞成 error）。红测试：`recordings-replay-events` 次要3 四例。
+
+- **第三轮返工修复（2026-09-24 · 次要14）**：`replay-events.ts` 翻页循环的 catch 中两分支同返回的死条件删除（错误态已统一上行展示，不再按 `ApiError.kind` 分支），并移除随之无用的 `ApiError` 导入。
 
 ### T11 回放播放器与 seek `flv-player.ts` + `seek.ts` ✅
 
@@ -165,6 +171,8 @@
   - 回归用例（先红后绿）：`tests/recordings-seek.test.ts`「次要5 失败文案区分原因」「次要5 过期 seek 静默丢弃，不上报失败」「次要5 降级直试被补丁拒绝时返回 patch-missing」，并同步更新既有 `seekUnbuffered` 断言为 `outcome.ok/reason`。
 
 - **第二轮返工修复（2026-09-24 · 次要8、次要5 收尾）**：`computeBufferConfig` 返回 `autoCleanupSourceBuffer: true`（mpegts 非 `isLive` 默认关闭 SourceBuffer 自动清理，否则「回退 40%」为死配置、50MB 预算仅前瞻 60% 生效，与技术方案 §3.3 不符）；`startReplay` 引入 start 代次——在 mpegts 加载/创建期间被新的 start 或 destroy 取代时放弃或立即销毁刚创建的实例（StrictMode 双 effect、URL 快切不再泄漏旧 player）。红测试：`recordings-seek` 次要8 两例。
+
+- **第三轮返工修复（2026-09-24 · R5-1/看门狗生命周期 · 本任务侧）**：`SeekWatchdog` 引入**终局态**——`disarm()` 置 `disposed`，此后 `arm()` 一律为空操作，超时触发后同样进入终局（迟到的成功不得复活定时器），从根上杜绝「latch/代次先被消费、`performSeek` 迟到才 arm」产生孤儿看门狗导致的 15s 误报；`performSeek` 成功路径的 `arm()` 变为（未终局时的）重新武装，网络阶段由组件在 `seekTo` 发起时即武装覆盖。红测试：`recordings-replay-stage` R5(1)/R5(2)/R5(3) 三例 + 既有看门狗用例保持全绿。
 
 ### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx` ✅
 
@@ -203,6 +211,8 @@
   - 回归用例（先红后绿）：`tests/recordings-replay-stage.test.tsx`「代码审核返工：P1–P4 与次要项」8 例、`tests/recordings-section.test.tsx` 次要6/9 三例、`tests/site-header.test.tsx` 次要8 一例、`tests/recordings-seek.test.ts` 次要5 三例；全量 `pnpm test` 20 文件 / 122 用例、`pnpm lint`、`tsc --noEmit`、`pnpm build` 全绿。
 
 - **第二轮返工修复（2026-09-24 · R1、次要10-②）**：续播判定只认「真实恢复」三条信号——`seeked` 事件、落位到目标邻域（±1s）、单次媒体采样内跳变（>2s）；seek 途中旧播放的连续推进**不再**解除中态/看门狗（P3-c 在真实播放时序下真正修复），落位点偏离目标 >1s（关键帧对齐常态）同样能可靠解除看门狗、15s 不误报（R1 原始症状换路径复现被堵住）；进度条「已缓冲」段按 `video.buffered` **按区间多段**渲染，不再以 `max(end)` 单段高估。红测试：`recordings-replay-stage` R1(1)/R1(2)/次要10 三例。
+
+- **第三轮返工修复（2026-09-24 · R5、次要11 · 本任务侧）**：(R5-a) 落位三信号（目标邻域/采样跳变/`seeked`）与「本次 seek 真实落位」绑定——latch 增加 `applied` 标记，只有 `performSeek` resolve 成功之后才可消费，飞行期旧播放推进（哪怕已进目标 ±1s 邻域）与上一次 seek 的残留 `scheduleSeekAlignment` clamp 触发的 `seeked` 一律丢弃（按代次 + applied 双重归属校验）；(R5-1) 看门狗在 `seekTo` 发起即 `arm()`，覆盖 Range 网络扫描全阶段，真实恢复/失败/被新 seek 取代/卸载四条路径均终局 `disarm`；(R5-c) Range 请求挂起时 15s 内给出「seek 超时」显性错误与重试入口，不再永久 spinner；(次要11) 删除自 P3-c 起只写不读的 `seekResumeRef.from` 死字段。红测试：R5(1) 邻域发起不提前解除、R5(2) 飞行期残留 seeked 不消费 latch 且 15s 无误报、R5(3) fetch 挂起 15s 超时报错；R1(1)/R1(2) 保持全绿。
 
 ### T14 全量验收 ✅
 

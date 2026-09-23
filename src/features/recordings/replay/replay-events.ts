@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { ApiError, fetchLiveEvents } from "../api";
+import { fetchLiveEvents } from "../api";
 import type { LiveEvent } from "../types";
 import { WINDOW_MS, toIso, windowBounds, windowIndexFor } from "./replay-windows";
 
@@ -171,9 +171,9 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
           notify();
         }
         return true;
-      } catch (cause) {
+      } catch {
         if (controller.signal.aborted) return false;
-        if (cause instanceof ApiError && cause.kind === "network") return false;
+        // 统一按失败上行（错误态由 UI 统一展示；不再按类别分支，审核次要14）
         return false;
       } finally {
         // 归属比对：仅删除属于本控制器的在途记录，避免被取代的旧请求误删新请求（审核次要3）

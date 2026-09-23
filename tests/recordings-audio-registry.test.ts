@@ -179,7 +179,7 @@ describe("多路音频注册表（T3 / AC-3）", () => {
     expect(registry.getLanesSnapshot()[0]?.state).toBe("playing");
   });
 
-  it("次要4 同步抛错的工厂也会释放 creating 计数（后续可继续 play）", () => {
+  it("次要4/次要12 同步抛错的工厂标记该路 error，且不阻塞后续 play（由 lanes map 保证）", () => {
     let shouldThrow = true;
     const factory: LivePlayerFactory = () => {
       if (shouldThrow) throw new Error("boom");

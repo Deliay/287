@@ -319,9 +319,15 @@ export function isTimeBuffered(video: BufferedLike, time: number): boolean {
   return false;
 }
 
-/** seek 看门狗：arm 后超时未 disarm 则触发超时回调（显性报错，禁止静默冻结）。 */
+/** seek 看门狗：arm 后超时未 disarm 则触发超时回调（显性报错，禁止静默冻结）。
+ *
+ * 生命周期语义（审核 R5-1）：`disarm()` 是**终局解除**——之后 `arm()` 一律为空操作，
+ * 杜绝「latch/代次先被消费、performSeek 迟到才 arm」产生孤儿定时器导致的 15s 误报；
+ * 超时触发后同样进入终局态，迟到的成功不得再次武装。
+ */
 export class SeekWatchdog {
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private disposed = false;
 
   constructor(
     private readonly onTimeout: () => void,
@@ -329,14 +335,22 @@ export class SeekWatchdog {
   ) {}
 
   arm(): void {
-    this.disarm();
+    if (this.disposed) return;
+    this.clearTimer();
     this.timer = setTimeout(() => {
       this.timer = null;
+      this.disposed = true; // 超时即终局：迟到的 arm 不得复活
       this.onTimeout();
     }, this.ms);
   }
 
+  /** 终局解除：清表定时器并禁止再次 arm。 */
   disarm(): void {
+    this.disposed = true;
+    this.clearTimer();
+  }
+
+  private clearTimer(): void {
     if (this.timer !== null) {
       clearTimeout(this.timer);
       this.timer = null;

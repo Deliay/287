@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RecordingFile } from "@/features/recordings/types";
 import {
-  MAX_RANGE_MS,
   WINDOW_MS,
   offsetMsFor,
   segmentBoundsForFile,
@@ -100,7 +99,7 @@ describe("时间锚点与分段推导 replay-windows（T9 / AC-7 对齐基准）
     expect(far.endMs).toBe(far.startMs + WINDOW_MS);
     const veryFar = windowBounds(200, start);
     expect(veryFar.endMs).toBe(veryFar.startMs + WINDOW_MS);
-    expect(veryFar.endMs - veryFar.startMs).toBeLessThanOrEqual(MAX_RANGE_MS); // 单窗恒 ≤12h
+    expect(veryFar.endMs - veryFar.startMs).toBe(WINDOW_MS); // 单窗恒为 10min（12h 上限只在 api.ts 钳制查询区间）
   });
 
   it("offsetMsFor / toIso 互为逆运算", () => {

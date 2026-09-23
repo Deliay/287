@@ -10,11 +10,8 @@
 
 import type { RecordingFile } from "../types";
 
-/** 单窗口时长（10 分钟）。 */
+/** 单窗口时长（10 分钟）。12h 的「单次查询区间」上限只存在于 api.ts（审核次要13）。 */
 export const WINDOW_MS = 600_000;
-
-/** replay 端点单次区间上界（12 小时）：窗口终点未知时的兜底上界。 */
-export const MAX_RANGE_MS = 12 * 60 * 60 * 1000;
 
 /** 目标文件（分段）实际覆盖区间；`endMs` 无法确定时为 `NaN`。 */
 export interface SegmentBounds {

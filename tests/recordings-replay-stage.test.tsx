@@ -555,3 +555,122 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     expect(group).toHaveAttribute("data-controls", "visible");
   });
 });
+
+describe("第三轮审核返工：R5（看门狗全程覆盖 + 续播判定绑定真实落位）", () => {
+  /** 模拟真实 performSeek：Range 探测飞行 100ms 后（网络阶段完成）才 arm + resolve */
+  function armOnResolveAfter(delayMs = 100) {
+    return vi.fn(
+      (args: PerformSeekArgs) =>
+        new Promise<boolean>((resolve) => {
+          window.setTimeout(() => {
+            args.watchdog?.arm();
+            resolve(true);
+          }, delayMs);
+        }),
+    );
+  }
+
+  it("R5(1) 旧播放已在目标 ±1s 邻域发起 seek：飞行期 spinner 与进度锁定不解除", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 55, "目标事件")]; // 目标 55s
+    const performSeek = armOnResolveAfter();
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    // 旧播放恰好停在目标邻域内（缓冲边缘/相邻事件 seek/进度微调皆为常态）
+    video.currentTime = 55.6;
+    fireEvent.timeUpdate(video);
+
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 飞行期（performSeek 未返回）旧播放继续推进，仍在目标邻域内 → 不得被 nearTarget 提前消费
+    video.currentTime = 55.9;
+    fireEvent.timeUpdate(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "播放进度" })).toBeDisabled();
+
+    // performSeek 生效后落位 → 才解除
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("R5(2) 飞行期残留 seeked 不消费 latch：不产生孤儿看门狗，恢复后 15s 无误报", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    const performSeek = armOnResolveAfter();
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    video.currentTime = 10;
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 飞行期：上一次 seek 的补丁 clamp（scheduleSeekAlignment）残留触发的 seeked
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(200); // performSeek 成功 → applied + arm
+    });
+    await flush();
+
+    // 真实恢复：落位 60s（跳变）
+    video.currentTime = 60;
+    fireEvent.timeUpdate(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("R5(3) Range fetch 挂起：15s 内给出超时错误与重试入口，不永久 spinner", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    const performSeek = vi.fn(() => new Promise<boolean>(() => {})); // 网络阶段永不返回
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    await flush();
+
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});

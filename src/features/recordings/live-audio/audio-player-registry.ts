@@ -82,7 +82,6 @@ export class AudioPlayerRegistry {
   private readonly listeners = new Set<() => void>();
   private snapshot: readonly AudioLane[] = Object.freeze([]);
   private mediaSnapshot: readonly LaneMedia[] = Object.freeze([]);
-  private creating = 0;
 
   constructor(private readonly factory: LivePlayerFactory) {}
 
@@ -174,7 +173,6 @@ export class AudioPlayerRegistry {
   private spawn(lane: LaneRecord, url: string): void {
     const generation = lane.generation;
     const isCurrent = () => this.lanes.get(lane.roomId) === lane && lane.generation === generation;
-    this.creating += 1;
 
     let result: LivePlayer | Promise<LivePlayer>;
     try {
@@ -196,8 +194,6 @@ export class AudioPlayerRegistry {
         },
       });
     } catch {
-      // 同步抛错同样释放 creating 计数（审核次要4）
-      this.creating -= 1;
       if (!isCurrent()) return;
       lane.state = "error";
       this.invalidate();
@@ -205,7 +201,6 @@ export class AudioPlayerRegistry {
     }
 
     const settle = (player: LivePlayer) => {
-      this.creating -= 1;
       if (!isCurrent()) {
         // 创建期间该路已被停止/重建：立即释放，避免泄漏
         player.destroy();
@@ -222,7 +217,6 @@ export class AudioPlayerRegistry {
 
     if (result instanceof Promise) {
       void result.then(settle).catch(() => {
-        this.creating -= 1;
         if (!isCurrent()) return;
         lane.state = "error";
         this.invalidate();
