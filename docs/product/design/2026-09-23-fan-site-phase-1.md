@@ -115,7 +115,7 @@
   - 当前列：正常色彩，立绘轻微放大（`scale(1.03)`）并提亮；
   - 其余三列：`filter: grayscale(1) brightness(0.6)`；
   - 过渡 300ms ease-out；鼠标移出首屏区域后全部恢复。
-- **点击**：新标签页打开该成员 B 站主页（`target="_blank" rel="noopener noreferrer"`）。
+- **点击**：新标签页打开该成员 B 站主页（`target="_blank" rel="noopener noreferrer"`）；四位成员的 UID 直链见[需求文档 §7](../requirement/2026-09-23-fan-site-phase-1.md)。
 
 **移动端：**
 

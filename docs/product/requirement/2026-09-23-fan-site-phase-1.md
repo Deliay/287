@@ -104,8 +104,17 @@ VirtuaReal 二十八期（"287"期）四位成员（小松绿 Viridis、四时�
 |----|------|------|
 | 成员资料 | `resources/{viridis,komichi,chu2u,sumire}.md`（简介、代表色等） | 已就绪 |
 | 立绘素材 | `resources/{viridis,komichi,chu2u,sumire}.avif` | 已就绪 |
-| B 站主页链接 | 四时小路为 UID 直链（`space.bilibili.com/1512246445`）；其余三位资料中仅有搜索页链接，需确认 UID 直链后替换 | **待确认** |
+| B 站主页链接 | 四位成员 UID 直链均已确认，见下表 | 已确认（2026-09-23） |
 | 介绍区文案 | 各成员介绍区使用的简介文案需在 `resources/` 简介基础上做展示化精简 | 设计阶段产出 |
+
+**成员 B 站主页：**
+
+| 成员 | 链接 |
+|------|------|
+| 小松绿 Viridis | https://space.bilibili.com/1891335475 |
+| 四时小路 Komichi | https://space.bilibili.com/1512246445 |
+| 羽啾 Chu2u | https://space.bilibili.com/2138961136 |
+| 枝堇 Sumire | https://space.bilibili.com/1150976664 |
 
 ## 8. Review 记录
 
