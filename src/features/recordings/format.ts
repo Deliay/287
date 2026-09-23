@@ -41,7 +41,7 @@ export function formatDuration(startIso: string | undefined, endIso: string | un
   return hours > 0 ? `${hours}小时${minutes}分` : `${minutes}分`;
 }
 
-/** 秒偏移转「mm:ss」（事件列表相对时间；入参单位为秒）。 */
+/** 秒偏移转时分秒文本（事件列表相对时间；入参单位为秒）：<1h 输出 `mm:ss`，≥1h 输出 `h:mm:ss`（审核 R9-b）。 */
 export function formatOffset(offsetSeconds: number): string {
   if (!Number.isFinite(offsetSeconds) || offsetSeconds < 0) return "00:00";
   const total = Math.floor(offsetSeconds);

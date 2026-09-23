@@ -207,9 +207,9 @@ function MemberCard({ member, item, lane }: MemberCardProps) {
 }
 
 /**
- * 当前直播状态网格（FR-2 / FR-3 UI）：四位成员按绿黑白紫顺序的 2×2 卡片，
+ * 纯展示态网格（FR-2 / FR-3 UI）：四位成员按绿黑白紫顺序的 2×2 卡片，
  * 接口未返回的成员兜底「未开播」；「听直播」接入多路音频注册表。
- * 页面可注入 `controller` 以与录播列表共享同一次状态拉取；缺省时自持一份。
+ * 数据由 props 注入（`state`/`retry`），自身不取数——取数策略见 `LiveStatusGrid`（审核 R9-b）。
  */
 function StatusGrid({ state, retry }: RecordingStatusController) {
   const lanes = useSyncExternalStore(

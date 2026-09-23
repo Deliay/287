@@ -6,7 +6,13 @@ import {
   type ReplayStageDeps,
 } from "@/features/recordings/replay/replay-stage";
 import type { LiveEvent, RecordingFile } from "@/features/recordings/types";
-import { setMpegtsLoader, type MpegtsLike } from "@/features/recordings/replay/flv-player";
+import {
+  isPlaybackSupported as realIsPlaybackSupported,
+  setMpegtsLoader,
+  startReplay as realStartReplay,
+  destroyReplay as realDestroyReplay,
+  type MpegtsLike,
+} from "@/features/recordings/replay/flv-player";
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
@@ -43,6 +49,16 @@ function makeEvent(id: string, offsetSeconds: number, content = id): LiveEvent {
     sender: { uid: 1, name: "观众甲", face: "", medal: null, guardLevel: null },
     content,
   };
+}
+
+function deferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 function jsonResponse(body: unknown) {
@@ -152,8 +168,9 @@ describe("回放舞台 ReplayStage（T13 / AC-5、AC-6、AC-7）", () => {
     expect(within(group).getByRole("button", { name: "全屏" })).toBeInTheDocument();
     const danmaku = within(group).getByRole("button", { name: /弹幕开关/ });
     expect(danmaku).toHaveAttribute("aria-pressed", "true");
-    // 进度条含缓冲显示（已播放比例条）
+    // 进度条含缓冲显示：buffered-bar 为「已缓冲」多段容器，played-bar 才是「已播放」（审核 R9-b）
     expect(screen.getByTestId("buffered-bar")).toBeInTheDocument();
+    expect(screen.getByTestId("played-bar")).toBeInTheDocument();
   });
 
   it("事件列表随播放 offset 高亮当前条目，点击条目按锚点换算 seek", async () => {
@@ -236,7 +253,7 @@ describe("回放舞台 ReplayStage（T13 / AC-5、AC-6、AC-7）", () => {
     expect(deps.destroyReplay).toHaveBeenCalledTimes(1);
     expect(deps.destroyReplay).toHaveBeenCalledWith(startArgs.url);
     expect(audioRegistry.getLanesSnapshot()).toHaveLength(0);
-    expect(screen.queryByTestId("floating-audio-player")).not.toBeInTheDocument();
+    // 注：不在此断言悬浮组件 DOM——本用例树内本就没有 FloatingAudioPlayer，恒真断言已按 R9-d 删除
   });
 
   it("seek 失败展示错误与重试（不白屏）", async () => {
@@ -558,6 +575,82 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     });
     fireEvent.mouseMove(column);
     expect(group).toHaveAttribute("data-controls", "visible");
+  });
+});
+
+describe("第七轮审核返工：R9（startReplay 失败语义区分 + 过期结果丢弃）", () => {
+  it("R9-a(1) start 在途被取代：过期 false 不得出现降级 UI，新实例不被销毁", async () => {
+    const playerB = {
+      attachMediaElement: vi.fn(),
+      load: vi.fn(),
+      play: vi.fn(() => Promise.resolve()),
+      destroy: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      seekToByteOffset: vi.fn(),
+      setBufferLimits: vi.fn(),
+    };
+    const createPlayer = vi.fn(() => playerB);
+    const healthy: MpegtsLike = {
+      isSupported: () => true,
+      createPlayer,
+      Events: { MEDIA_INFO: "media_info", ERROR: "error" },
+    } as unknown as MpegtsLike;
+
+    let loaderCall = 0;
+    const first = deferredPromise<MpegtsLike>();
+    restoreLoader = setMpegtsLoader(() =>
+      loaderCall++ === 0 ? first.promise : Promise.resolve(healthy),
+    );
+
+    const deps = makeDeps({
+      startReplay: realStartReplay, // 真实实现：被取代的 start 返回 false（代次纪律）
+      destroyReplay: realDestroyReplay,
+      isPlaybackSupported: () => Promise.resolve(true),
+    });
+    const file2: RecordingFile = { ...file, name: "游玩饥荒-第二段.flv" };
+
+    const { rerender } = render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush(); // start#1 在途（等待 loader#1）
+
+    // 文件/url 变化 → effect 重跑（cleanup 作废 start#1），start#2 起播成功
+    rerender(<ReplayStage roomId={1001} file={file2} bounds={bounds} deps={deps} />);
+    await flush();
+    expect(createPlayer).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("mse-degrade")).not.toBeInTheDocument();
+
+    // 过期的 start#1 此时才 resolve(false)（token 已过期）
+    act(() => {
+      first.resolve(healthy);
+    });
+    await flush();
+    await flush();
+
+    expect(screen.queryByTestId("mse-degrade")).not.toBeInTheDocument(); // 红：过期 false 触发假降级
+    expect(playerB.destroy).not.toHaveBeenCalled(); // 红：降级重跑 effect 又销毁健康实例
+
+    // 卸载清理真实单例状态
+    rerender(<></>);
+    await flush();
+  });
+
+  it("R9-a(2) mpegts 加载失败：文案 ≠ MSE 降级文案，且提供重试", async () => {
+    restoreLoader = setMpegtsLoader(() => Promise.reject(new Error("cdn down")));
+    const deps = makeDeps({
+      isPlaybackSupported: realIsPlaybackSupported, // 真实实现经由注入的失败 loader
+      startReplay: realStartReplay,
+      destroyReplay: realDestroyReplay,
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    await flush();
+
+    // 网络加载失败 ≠ 浏览器不支持：不得渲染 §2.5 的 MSE 降级文案（审核 次要5 同构）
+    expect(screen.queryByTestId("mse-degrade")).not.toBeInTheDocument(); // 红：当前被折算成假降级
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("加载失败");
+    expect(alert).not.toHaveTextContent("当前浏览器无法播放");
+    expect(within(alert).getByRole("button", { name: "重试" })).toBeInTheDocument();
   });
 });
 

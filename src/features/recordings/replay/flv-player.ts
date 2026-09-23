@@ -73,14 +73,14 @@ async function loadMpegts(): Promise<MpegtsLike> {
   return mpegtsLoader();
 }
 
-/** 浏览器是否支持 MSE 在线播放（iOS Safari 通常为 false → 降级提示）。 */
+/**
+ * 浏览器是否支持 MSE 在线播放（iOS Safari 通常为 false → 降级提示）。
+ * mpegts 资源加载失败（网络/CDN）会 **reject**，与「不支持」区分——
+ * 调用方据此分别给「加载失败 + 重试」与设计 §2.5 降级文案（审核 R9-a，次要5 同构）。
+ */
 export async function isPlaybackSupported(): Promise<boolean> {
-  try {
-    const mpegts = await loadMpegts();
-    return mpegts.isSupported();
-  } catch {
-    return false;
-  }
+  const mpegts = await loadMpegts();
+  return mpegts.isSupported();
 }
 
 interface PatchedPlayer extends MpegtsPlayer {
@@ -99,14 +99,19 @@ export interface StartReplayArgs {
   onError: () => void;
   /** 就绪后是否自动播放（回放页缺省不自动播放，规避自动播放拦截）。 */
   autoplay?: boolean;
+  /** mpegts 资源加载失败（网络/CDN）回调：与「MSE 不支持」区分，供调用方给「加载失败+重试」（审核 R9-a）。 */
+  onLoadError?: () => void;
 }
 
 /** start 代次：并发/被取代的 start 不得创建播放器（审核次要8，StrictMode 双 effect 与 URL 快切防泄漏）。 */
 let startGeneration = 0;
 
 /**
- * 启动回放播放（页面内单例）。
- * MSE 不支持时不初始化播放器并返回 `false`（调用方据此渲染降级文案）。
+ * 启动回放播放（页面内单例）。返回 `false` 有**三种原因**（审核 R9-a，JSDoc 与实现对齐）：
+ *  1. mpegts.js 资源加载失败（网络/CDN）→ 触发 `onLoadError`，调用方显示「加载失败 + 重试」；
+ *  2. `isSupported() === false`（浏览器无 MSE）→ 调用方渲染设计 §2.5 降级文案；
+ *  3. **被新的 start/destroy 取代（代次过期）→ 静默语义**：调用方必须丢弃该结果、不得据此改 UI
+ *     （否则 StrictMode 双 effect / URL 快切下会把健康实例误判为降级，审核 R9-a）。
  */
 export async function startReplay(args: StartReplayArgs): Promise<boolean> {
   destroyReplay(); // 先失效旧实例与所有在途 start
@@ -116,6 +121,7 @@ export async function startReplay(args: StartReplayArgs): Promise<boolean> {
     mpegts = await loadMpegts();
   } catch (error) {
     console.error("[recordings] mpegts.js 加载失败", error);
+    args.onLoadError?.();
     return false;
   }
   // 加载期间已被新的 start/destroy 取代：不再创建（审核次要8）

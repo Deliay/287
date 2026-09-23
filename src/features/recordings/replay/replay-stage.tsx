@@ -43,6 +43,9 @@ export const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2] as const;
 /** 控件栏静止自动隐藏延时（仅播放中生效）。 */
 const CONTROLS_HIDE_MS = 3000;
 
+/** mpegts 资源加载失败文案（≠ 设计 §2.5 的 MSE 降级文案，审核 R9-a / 次要5）。 */
+const PLAYER_LOAD_ERROR_MESSAGE = "播放器资源加载失败，请重试";
+
 /** 落位判定：以 seek 目标为中心的邻域容差（秒，审核 R1）。 */
 const SEEK_LAND_TOLERANCE = 1;
 /** 落位判定：单次媒体采样内位移超过该值（秒）视为 seek 跳变落位，而非旧播放的连续推进（审核 R1）。 */
@@ -119,8 +122,9 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
    * 本次 seek 的落位监控（审核 R1/R5/R7）：`applied` 表示 performSeek 已生效；
    * `expected` 为 apply 时刻采样的落点（补丁 directSeek 同步写入的 currentTime），
    * 供后续 `seeked`/媒体事件做**落位动作前后对比**的归属判定（审核 R7-c）。
-   * 注意：看门狗超时**不**清本监控——迟到的真实落位仍须清除超时浮层（审核 R7-a）；
-   * 只有「归属成立的落位 / 新 seek 接管 / 卸载」才终结它。
+   * 注意：看门狗超时**不**清本监控——迟到的真实落位仍须清除超时浮层（审核 R7-a）。
+   * 终结路径共四类（审核 R9-b 口径核对）：① 归属成立的落位（`convergeLanding`）；
+   * ② 失败终局（`onFailed` 与 `.then` 兜底清错分支）；③ 新 seek 接管；④ 组件卸载。
    */
   const seekResumeRef = useRef<{
     token: number;
@@ -146,6 +150,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       : 0;
 
   const [supported, setSupported] = useState<boolean | null>(null);
+  /** 播放器资源加载失败（网络/CDN）：给「加载失败 + 重试」，不走 MSE 降级（审核 R9-a） */
+  const [loadError, setLoadError] = useState(false);
+  /** 触发探测/起播重试的代次 */
+  const [startAttempt, setStartAttempt] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [failed, setFailed] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -222,29 +230,69 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   // MSE 支持探测 → 初始化回放播放器（不支持时降级，不初始化）
   useEffect(() => {
     let active = true;
-    void detectSupport().then((ok) => {
-      if (active) setSupported(ok);
-    });
+    void detectSupport().then(
+      (ok) => {
+        if (active) {
+          setSupported(ok);
+          if (ok) setLoadError(false);
+        }
+      },
+      () => {
+        // 资源加载失败 ≠ 浏览器不支持：保持未判定并给「加载失败 + 重试」（审核 R9-a）
+        if (active) {
+          setSupported(null);
+          setLoadError(true);
+        }
+      },
+    );
     return () => {
       active = false;
     };
-  }, [detectSupport]);
+  }, [detectSupport, startAttempt]);
 
   useEffect(() => {
     if (supported !== true) return;
     const media = videoRef.current;
     if (!media) return;
+    // cancelled：本 effect 已被取代/卸载时，过期结果（含被代次作废的 false）一律丢弃——
+    // 对齐 P3-b「过期回调一律丢弃」的代次纪律（审核 R9-a）
+    let cancelled = false;
+    let loadFailed = false;
     setFailed(false);
     void startReplay({
       url,
       media,
       fileSize: file.size,
-      onError: () => setFailed(true),
+      onError: () => {
+        if (!cancelled) setFailed(true);
+      },
+      onLoadError: () => {
+        loadFailed = true;
+      },
     }).then((started) => {
-      if (!started) setSupported(false);
+      if (cancelled) return;
+      if (started) {
+        setLoadError(false);
+        return;
+      }
+      if (loadFailed) {
+        setLoadError(true); // 加载失败 → 重试文案，不得折算成 MSE 降级（审核 R9-a）
+        return;
+      }
+      // 只有「isSupported() === false」才判设计 §2.5 降级
+      setSupported(false);
     });
-    return () => destroyReplay(url);
-  }, [supported, url, file.size, startReplay, destroyReplay]);
+    return () => {
+      cancelled = true;
+      destroyReplay(url);
+    };
+  }, [supported, url, file.size, startReplay, destroyReplay, startAttempt]);
+
+  /** 重试播放器资源加载：重新探测 + 起播（审核 R9-a）。 */
+  const retryPlayerLoad = () => {
+    setLoadError(false);
+    setStartAttempt((value) => value + 1);
+  };
 
   // seek 看门狗 / 在途 Range：卸载即终局作废（看门狗 disarm、在途请求 abort、代次推进使迟到回调失效）
   useEffect(
@@ -268,7 +316,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
    * 解除看门狗、收敛中态，并清除错误浮层（迟到的真实落位不得残留「seek 超时」，R7-a）。
-   * 由 `tryLand()` 在**任一**归属证据成立时调用（证据为并列关系，见其注释；审核 R8-a）。
+   * 调用方有两处（审核 R9-b 口径核对）：`tryLand()`（任一归属证据成立，证据为并列关系）
+   * 与 `performSeek` 成功分支（落点已在目标邻域时即时收敛）。
    */
   const convergeLanding = useCallback(() => {
     watchdogRef.current?.disarm();
@@ -631,6 +680,15 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                   播放失败，请稍后重试。
                 </div>
               )}
+            </div>
+          )}
+
+          {loadError && supported !== false && (
+            <div className={styles.loadError} role="alert" data-testid="player-load-error">
+              <span>{PLAYER_LOAD_ERROR_MESSAGE}</span>
+              <button type="button" onClick={retryPlayerLoad}>
+                重试
+              </button>
             </div>
           )}
 

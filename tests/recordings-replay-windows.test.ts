@@ -55,7 +55,7 @@ describe("时间锚点与分段推导 replay-windows（T9 / AC-7 对齐基准）
 
     const first = segmentBoundsForFile(files, "seg-1.flv");
     expect(first.startMs).toBe(Date.parse("2026-09-23T20:00:00.000Z")); // 首段：锚点 startedAt
-    expect(first.endMs).toBe(Date.parse("2026-09-23T21:00:00.000Z")); // 下一段 createdAt
+    expect(first.endMs).toBe(Date.parse("2026-09-23T21:00:00.000Z")); // 非末段终点 = 本段 createdAt（落盘≈分段结束，审核 R9-b/R9-c）
 
     const second = segmentBoundsForFile(files, "seg-2.flv");
     // 风险表 #7 检查点：起点来自**前一段** createdAt，而非目标文件自身 createdAt

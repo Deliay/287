@@ -2,6 +2,7 @@
 
 - 版本：v1.0
 - 创建日期：2026-09-23
+- 变更：2026-09-24（审核 R9-c：§3.3 多分段推导勘误、§4.2 契约按实现刷新；实现不变）
 - 状态：待评审
 
 ## 1. 对应上游文档
@@ -70,7 +71,7 @@ patches/
 
 ### 3.3 关键实现思路
 
-**时间轴对齐（弹幕 ↔ 视频）**：锚点取文件 `info.startedAt`（毫秒），`offsetMs = occurredAt - startedAt`。**不用 `createdAt`**——分段录播的 `createdAt` 是该分段落盘时刻（参考站实测结论）。多分段场次（同 `recordingId` 的兄弟文件）按 `createdAt` 升序推导各分段起止：分段的结束偏移 = 下一段 `createdAt` 与首段 `startedAt` 之差（回放页通过 recordings 列表回源该文件的兄弟分段）。
+**时间轴对齐（弹幕 ↔ 视频）**：锚点取文件 `info.startedAt`（毫秒），`offsetMs = occurredAt - startedAt`。**不用 `createdAt` 作锚点**——分段录播的 `createdAt` 是该分段**落盘（≈分段结束）**时刻（参考站实测结论）。多分段场次（同 `recordingId` 的兄弟文件）按 `createdAt` 升序推导各分段起止（**勘误 2026-09-24 / 审核 R9-c，以实现模型为准**）：**非末段终点 = 本段 `createdAt`**、末段终点 = `info.endedAt`（缺失回退本段 `createdAt`）；**其余段起点 = 该段前一段的 `createdAt`**、首段起点 = 首段 `info.startedAt`（回放页通过 recordings 列表回源该文件的兄弟分段）。〔原句「分段的结束偏移 = 下一段 `createdAt` 与首段 `startedAt` 之差」措辞有误：按 room 1727074031 实测两段样本（2.89GB / 2.29GB）字面推导，第二段仅剩约 1 秒却需承载 2.29GB，与数据矛盾；实现模型推导两段各约 63 / 92 分钟、码率合理。〕
 
 **未缓冲区域 seek（`seek.ts`，本项目最难部分）**：
 
@@ -137,26 +138,36 @@ interface LiveEvent {
 
 ### 4.2 内部模块契约
 
+> 2026-09-24 按实现刷新签名与返回面（审核 R9-c）。
+
 ```ts
 // live-audio/audio-player-registry.ts
 type LaneState = "loading" | "playing" | "error";
-interface AudioLane { roomId: number; state: LaneState; volume: number; }
-play(roomId: number): void;            // 幂等；超过 4 路拒绝（UI 层保证不触发）
+interface AudioLane { roomId: number; state: LaneState; volume: number; label?: string; colorKey?: string; }
+play(roomId: number, meta?: { label: string; colorKey: string }): boolean; // 幂等；超过 4 路返回 false
 stop(roomId: number): void;
 stopAll(): void;
 setVolume(roomId: number, volume: number): void;
-retry(roomId: number): void;
+retry(roomId: number): boolean;        // 失败重试：返回是否命中已有 lane
 subscribeLanes(cb): () => void;        // useSyncExternalStore 用
-getLanesSnapshot(): AudioLane[];
+getLanesSnapshot(): readonly AudioLane[];
 
 // replay/replay-windows.ts
-segmentBoundsForFile(files: RecordingFile[], target: string): { startMs: number; endMs: number };
+segmentBoundsForFile(files: RecordingFile[], target: string): { startMs: number; endMs: number }; // endMs 未知为 NaN
 windowIndexFor(offsetMs: number): number;
 
 // replay/replay-events.ts
-useReplayEvents(roomId: number, bounds: SegmentBounds): {
-  eventsFor(offsetMs: number): LiveEvent[];  // 当前及相邻窗口的去重升序事件
-  focusWindow(index: number): void;
+useReplayEvents(
+  roomId: number | null,
+  bounds: { startMs: number | null; endMs?: number | null },
+  fetchEvents?: FetchEvents,           // 依赖注入（默认 fetchLiveEvents）
+): {
+  events: readonly LiveEvent[]; loading: boolean; error: boolean; focusedWindow: number;
+  focusWindow(index: number): void;    // 切换关注窗口（last-wins + abort 在途）
+  ensureWindow(index: number): Promise<boolean>;
+  prefetchNext(offsetMs: number): void;// 窗口过半预取下一窗
+  eventsFor(offsetMs: number): readonly LiveEvent[];  // 当前及相邻窗口的去重升序事件
+  retry(): void;                       // 清当前关注窗缓存重拉
 };
 ```
 

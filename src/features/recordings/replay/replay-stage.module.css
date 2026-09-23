@@ -129,6 +129,27 @@
   padding: var(--mantine-spacing-md);
 }
 
+/* 播放器资源加载失败（≠ MSE 降级）：显性提示 + 重试（审核 R9-a） */
+.loadError {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  border: 1px solid var(--mantine-color-komichi-6);
+  border-radius: 10px;
+  color: var(--mantine-color-komichi-6);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.loadError button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
 .controls,
 .controlsHidden {
   display: flex;
