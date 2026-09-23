@@ -55,9 +55,10 @@
 
 /* 徽章槽与 meta 同为不接管命中：命中链 .badge(none)/.badgeSlot(none)/.meta(none)
    整条穿透到下方覆盖式锚点，非交互态徽章不产生点击死区（R4）；
-   开播徽章由 live-badge 的 .living 显式 auto 成为命中目标（祖先 none 不阻止子树显式 auto） */
+   开播徽章由 live-badge 的 .living 显式 auto 成为命中目标（祖先 none 不阻止子树显式 auto）。
+   槽保持拉伸（勿 flex-start）：为 .badge 的 max-width:100% 提供确定基准，
+   单行长标题走 text-overflow 截尾而非被面板边缘硬裁（R5-2） */
 .badgeSlot {
-  align-self: flex-start;
   pointer-events: none;
 }
 

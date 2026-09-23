@@ -158,4 +158,16 @@ describe("首屏立绘墙 HeroWall 层叠结构（R1 回归防护）", () => {
     expect(slotBody).toMatch(/pointer-events:\s*none/);
     expect(slotBody).not.toMatch(/pointer-events:\s*auto/);
   });
+
+  it("徽章槽保持拉伸（不得 flex-start），使 .badge 的 max-width 有确定基准、ellipsis 截尾生效（R5-2 附带防护）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/hero-wall.module.css"),
+      "utf8",
+    );
+    const slotBody = ruleBody(css, "badgeSlot");
+
+    // flex-start 会令槽宽 = nowrap 的 min-content，导致 .badge max-width:100%
+    // 失去基准：长标题不走 text-overflow 截尾而被面板边缘硬裁、徽章几何盒越界
+    expect(slotBody).not.toMatch(/align-self:\s*flex-start/);
+  });
 });

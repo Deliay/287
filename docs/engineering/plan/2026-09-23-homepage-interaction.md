@@ -222,3 +222,21 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 状态 B 开播（route fulfill `live:true`） | 徽章盒中心（badge computed `pointer-events=auto`，slot=`none`） | `A.live-badge-module__…__living` 自身，`href=https://space.bilibili.com/1891335475` | ✅ AC-3 徽章链接仍为命中目标（祖先 `none` 不阻止子孙显式 `auto`） |
 
 复跑方法：`python3 -m http.server 8123 --directory out` + `/tmp/opencode/verify-hit.cjs`（Playwright 脚本，含状态 A/B 双路由与点击探针）。
+
+### 返工记录（第六轮，2026-09-23，Review R5-1 / R5-2）
+
+> 需求 v1.1 / 技术方案 §3.3 / 实现计划 T4 已由审核节点先行修订（a89fb48，文档先行），本轮按修订后文档实现，不改需求语义。
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R5-1 开播徽章 `.living` 硬编码全站统一红（`--mantine-color-red-6`），四位成员徽章外观完全相同，违背一期「每位成员代表色」视觉体系（`.bar`、`.cta` 均已随成员变色） | `.living` 主色改 `background-color: var(--member-accent)`（由 hero-wall 面板 div 与 member-section section 内联提供，作用域已核实，无需改数据层/传参）；文字改用深色 `--mantine-color-night287-9`——四色板 `-6` 阶（绿 `#8eb056` / 红 `#ff2231` / 浅绿 `#d4da7b` / 浅紫 `#b4a6bf`）上深色文字对比度均可读（白字在浅色板上不达标）；`.badge{none}`/`.living{auto}` 指针事件声明原样保留 | TDD 第 6 条：读取 `live-badge.module.css`，`.living` 背景须为 `var(--member-accent)`、无十六进制色值、背景不得取 `--mantine-color-*` 固定色板 |
+| R5-2 开播可见文本为裸标题，未以「正在直播」开头 | 开播态渲染「正在直播：{标题}」（全角冒号，与既有 `aria-label` 口径一致）；`text-overflow: ellipsis` 截尾天然保证前缀完整可见 | TDD 第 5 条：可见文本 `startsWith("正在直播：")` 且含标题；既有开播用例文本断言同步更新 |
+| 防护边界 | R1–R4 命中链结构断言（`.badge`/`.badgeSlot`/`.living`/`.bar` 的 pointer-events 链）零改动 | 既有断言保持绿色 |
+| R5-2 附带暴露（实证发现）：`.badgeSlot` 的 `align-self: flex-start` 使槽宽 = nowrap 的 `min-content`（实测 464px > 面板 320px），`.badge { max-width: 100% }` 失去确定基准——**ellipsis 从未生效**，长标题被 `panel overflow:hidden` 在边缘硬裁、徽章几何盒越界到相邻面板（评审脚本网格采样 12/15），「ellipsis 截尾天然满足」的机制实际不成立 | **必要的最小越界修正（已透明记录）**：`hero-wall.module.css` 的 `.badgeSlot` 移除 `align-self: flex-start`，恢复 stretch → 槽宽 = meta 内容宽（确定值）→ `.badge max-width:100%` 有基准 → 单行 `nowrap` + `text-overflow: ellipsis` 真正截尾、前缀完整可见、徽章盒收敛在面板内。**仅删 1 行布局声明，`pointer-events: none` 命中链声明与断言零改动**（评审限定范围外的唯一改动，为满足 R5-2 既定截断机制的必要项） | `hero-wall.test.tsx` 新增结构断言：`.badgeSlot` 不得设 `align-self: flex-start`（先红后绿） |
+| R5-2 二次附带暴露（实证发现）：`border-radius: 4px` + `overflow: hidden`（`text-overflow` 必需）组合使 Chromium 对**命中区域**施加圆角裁切——徽章右下内角 (right−1, bottom−1) 处 (1,1) 偏移点落在半径 4px 弧外（√2·3≈4.24>4），点击穿透到面板，评审脚本网格 14/15（消融实验实证：`borderRadius=0` 或 `overflow=visible` 均可恢复命中；半径扫描 0/1/2px→15/15、3/4px→14/15） | `.badge` 圆角降级 `--mantine-radius-sm`（4px）→ **`--mantine-radius-xs`（2px）**：网格 15/15 全命中（实测），保留细微圆角视觉；不改 `overflow: hidden`/`text-overflow`（ellipsis 是 R5-2 的既定截断机制）、不动命中链 pointer-events | `live-badge.test.tsx` 新增结构断言：`.badge` 规则 `border-radius` 须为 `--mantine-radius-xs`（先红后绿） |
+
+**第六轮复验留档（2026-09-24，无头 Chromium 对本仓库 `out/` 构建产物，13+14+21 项全部通过）**：
+- `verify-hit.cjs`：**13/13**——未开播徽章盒中心/`.bar`/名字命中面板锚点、真实点击 `defaultPrevented=true` 且 `scrollY 0→794`、开播态命中徽章外链自身；
+- `review-r5-verify.cjs`（评审留档脚本，独立实现）：**14/14**——四面板 5×3 网格各 15/15 命中面板锚点、真实点击路由+拦截+落位、加载骨架态 15/15、**开播徽章盒 15/15 命中外链自身**、介绍区徽章 3/3；
+- `verify-r5.cjs`：**21/21**——四位成员开播主色分别 `rgb(142,176,86)/rgb(255,34,49)/rgb(212,218,123)/rgb(180,166,191)`（调色盘 -6 阶逐值匹配、互不相同）、文字深色可读、可见文本以「正在直播：」开头、长标题 `truncated=true` 且前缀四字像素框完整在盒内。
+- 单测/静态检查：`pnpm test` 11 files / **64 tests** 全绿，`pnpm lint`、`pnpm build` 全绿。

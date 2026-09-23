@@ -46,7 +46,7 @@ export function LiveBadge({ member }: LiveBadgeProps) {
         rel="noopener noreferrer"
         aria-label={`${member.romanName} 正在直播：${title}`}
       >
-        {title}
+        {`正在直播：${title}`}
       </a>
     );
   }
