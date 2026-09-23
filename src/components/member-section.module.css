@@ -87,6 +87,10 @@
     --art-zoom: 2;
   }
 
+  .art {
+    transform: scale(0.75) translateY(50%);
+  }
+
   .figure {
     align-self: stretch;
     width: 40%;

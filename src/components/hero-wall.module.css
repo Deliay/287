@@ -21,9 +21,7 @@
 
 .art {
   object-fit: cover;
-  object-position: var(--art-pos);
-  transform: scale(var(--art-zoom));
-  transform-origin: var(--art-pos);
+  object-position: top;
   transition: transform 300ms ease-out, filter 300ms ease-out;
 }
 
@@ -77,6 +75,11 @@
 
   .wall:hover .panel:hover {
     filter: none;
+  }
+
+  .art {
+    transform: scale(var(--art-zoom));
+    transform-origin: var(--art-pos);
   }
 
   .wall:hover .panel:hover .art {
