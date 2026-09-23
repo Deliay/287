@@ -8,6 +8,7 @@ import {
 import type { LiveEvent, RecordingFile } from "@/features/recordings/types";
 import { setMpegtsLoader, type MpegtsLike } from "@/features/recordings/replay/flv-player";
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
+import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
@@ -672,5 +673,120 @@ describe("第三轮审核返工：R5（看门狗全程覆盖 + 续播判定绑�
     expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属窗口）", () => {
+  /** 模拟慢速 Range：响应要等测试手动放行（弱网 9GB 录播扫描窗下载 >15s 的真实场景） */
+  function makePendingRangeResponse() {
+    const holder: { release: ((value: Response) => void) | null } = { release: null };
+    const fetchFn = (() =>
+      new Promise<Response>((resolve) => {
+        holder.release = resolve;
+      })) as unknown as typeof fetch;
+    const emptyRange: Response = {
+      ok: true,
+      status: 206,
+      headers: { get: () => null },
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as Response;
+    return { fetchFn, release: () => holder.release?.(emptyRange) };
+  }
+
+  it("R5(4) 超时作废在途 seek：迟到 Range 不执行补丁跳转，且不残留与实际播放矛盾的超时浮层", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    const pendingRange = makePendingRangeResponse();
+    const seekSpy = vi.fn();
+    const performSeekImpl = vi.fn((args: PerformSeekArgs) =>
+      realPerformSeek({
+        ...args,
+        fetchFn: pendingRange.fetchFn,
+        seekToByteOffset: seekSpy,
+      }),
+    );
+    const deps = makeDeps({
+      performSeek: performSeekImpl,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    Object.defineProperty(video, "paused", { value: false, configurable: true }); // 弱网 seek 期间播放仍在进行
+
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+
+    // T=15s：看门狗超时 → 作废在途 seek（abort）+ 显性报错
+    act(() => {
+      vi.advanceTimersByTime(15_000);
+    });
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
+
+    // T=20s+：Range 响应才迟到 → 已作废，不得再触碰媒体元素
+    act(() => {
+      pendingRange.release();
+    });
+    await flush();
+
+    expect(seekSpy).not.toHaveBeenCalled(); // 未执行补丁跳转（审核 R6-a 不变量1）
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // 不留「播放失败但实际在播」的矛盾浮层（不变量2）
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+  });
+
+  it("R6-c 前次 apply 后 5s 内到达的残留 seeked 不消费本次 latch（位置信号兜底落位）", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "第一次"), makeEvent("e2", 120, "第二次")];
+    const performSeek = vi.fn(async (args: PerformSeekArgs) => {
+      args.watchdog?.arm();
+      return true;
+    });
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 2, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+
+    // 第一次 seek：立即生效并落位（建立 apply 时间戳）
+    fireEvent.click(screen.getByRole("button", { name: /第一次/ }));
+    await flush();
+    video.currentTime = 61;
+    fireEvent.timeUpdate(video); // nearTarget → land
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    // 1s 后发起第二次 seek（事件列表连点相邻条目：前次补丁 clamp 链仍在 5s 窗口内）
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /第二次/ }));
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(100); // 第二次 performSeek 生效（applied）
+    });
+    await flush();
+
+    // 前次 seek 的 scheduleSeekAlignment 残留 seeked 在本次 applied 之后才入队
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument(); // 不得被残留 seeked 提前消费
+
+    // 真实落位由位置信号消费
+    video.currentTime = 118;
+    fireEvent.timeUpdate(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

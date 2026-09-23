@@ -134,7 +134,7 @@
 
 - **第二轮返工修复（2026-09-24 · 次要2）**：`windowBounds` 在终点未知时不再以 `recordStart + 12h` 作绝对上界（12h 只约束**单次查询区间**，单窗恒 10min），否则未知终点且录制 >12h 时 index ≥ 72 的窗口 `endMs ≤ startMs` 会被静默拉空。红测试：`recordings-replay-windows`「windowBounds 起止与 12h 契约」。
 
-- **第三轮返工修复（2026-09-24 · 次要13）**：删除 `replay-windows.ts` 的 `MAX_RANGE_MS`——其注释仍写着次要2 已废弃的「窗口终点未知时的兜底上界」语义，且与 `api.ts` 的 `MAX_QUERY_RANGE_MS` 重复；12h 现在只存在于 `api.ts`（单次查询区间钳制），单窗口宽度恒为 10min，测试改断言 `endMs - startMs === WINDOW_MS`。
+- **第三轮返工修复（2026-09-24 · 次要13）**：删除 `replay-windows.ts` 的 `MAX_RANGE_MS`——其注释仍写着次要2 已废弃的「窗口终点未知时的兜底上界」语义，且与 `api.ts` 的 `MAX_QUERY_RANGE_MS` 重复；12h **常量**仅存在于 `api.ts` 的 `MAX_QUERY_RANGE_MS`（钳制单次查询区间），单窗口宽度恒为 10min，测试改断言 `endMs - startMs === WINDOW_MS`。（**第四轮 R6-b 补正**：当时 replay 侧仍残留一句同语义的孪生注释——`replay-events.ts` 的「终点未知以 start + 12h 为上界」，已一并更正为「按 start + 单窗 10min 逐窗推进、不设绝对上界」，并全仓 grep 复核：`src/` 下 12h 语义现在只剩 `api.ts` 的钳制常量与 `replay-windows` 的解释性说明。）
 
 ### T10 弹幕窗口加载 `src/features/recordings/replay/replay-events.ts` ✅
 
@@ -174,6 +174,8 @@
 
 - **第三轮返工修复（2026-09-24 · R5-1/看门狗生命周期 · 本任务侧）**：`SeekWatchdog` 引入**终局态**——`disarm()` 置 `disposed`，此后 `arm()` 一律为空操作，超时触发后同样进入终局（迟到的成功不得复活定时器），从根上杜绝「latch/代次先被消费、`performSeek` 迟到才 arm」产生孤儿看门狗导致的 15s 误报；`performSeek` 成功路径的 `arm()` 变为（未终局时的）重新武装，网络阶段由组件在 `seekTo` 发起时即武装覆盖。红测试：`recordings-replay-stage` R5(1)/R5(2)/R5(3) 三例 + 既有看门狗用例保持全绿。
 
+- **第四轮返工修复（2026-09-24 · R6-a · seek.ts 侧 + 顺带决策点）**：`seekUnbuffered` 贯穿 `AbortSignal`——发起前/响应后/扫描后/apply 前四处复查 `signal.aborted`，新增 `aborted` 失败原因（与 `stale` 同为静默路径），被终局作废的在途 seek 迟到的 Range 响应一律取消响应体并**跳过补丁 apply**（不变量1：迟到成功不再触碰媒体元素）；`performSeek` 对 `aborted` 改走新增的 `onAborted` 回调（不报新错），由调用方收敛 UI（不变量2）。`SeekWatchdog.arm()` 同时改为**幂等且严格自计时**：已武装时不重置计时，超时恒以 seekTo 发起点计满 15s——这是对本轮回稿「performSeek 成功路径 arm 会重置计时、最坏 29s」顺带决策点的处理（文案「15 秒内未恢复播放」与真实计时一致）。红测试：`recordings-replay-stage` R5(4)（迟到 Range 不执行补丁跳转、不残留矛盾浮层）。
+
 ### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx` ✅
 
 - 产出：canvas 2D + rAF 浮层：匀速右→左横穿（约 8s）、轨道分配防重叠、字号随画布宽度缩放、表情弹幕（`emote.url`）预载 `Image` 绘制；正常播放发射 `(prev, current]` 区间事件，seek 跳变（回退或前跳 >2s）清空并补发最近 4s；弹幕开关。
@@ -212,7 +214,9 @@
 
 - **第二轮返工修复（2026-09-24 · R1、次要10-②）**：续播判定只认「真实恢复」三条信号——`seeked` 事件、落位到目标邻域（±1s）、单次媒体采样内跳变（>2s）；seek 途中旧播放的连续推进**不再**解除中态/看门狗（P3-c 在真实播放时序下真正修复），落位点偏离目标 >1s（关键帧对齐常态）同样能可靠解除看门狗、15s 不误报（R1 原始症状换路径复现被堵住）；进度条「已缓冲」段按 `video.buffered` **按区间多段**渲染，不再以 `max(end)` 单段高估。红测试：`recordings-replay-stage` R1(1)/R1(2)/次要10 三例。
 
-- **第三轮返工修复（2026-09-24 · R5、次要11 · 本任务侧）**：(R5-a) 落位三信号（目标邻域/采样跳变/`seeked`）与「本次 seek 真实落位」绑定——latch 增加 `applied` 标记，只有 `performSeek` resolve 成功之后才可消费，飞行期旧播放推进（哪怕已进目标 ±1s 邻域）与上一次 seek 的残留 `scheduleSeekAlignment` clamp 触发的 `seeked` 一律丢弃（按代次 + applied 双重归属校验）；(R5-1) 看门狗在 `seekTo` 发起即 `arm()`，覆盖 Range 网络扫描全阶段，真实恢复/失败/被新 seek 取代/卸载四条路径均终局 `disarm`；(R5-c) Range 请求挂起时 15s 内给出「seek 超时」显性错误与重试入口，不再永久 spinner；(次要11) 删除自 P3-c 起只写不读的 `seekResumeRef.from` 死字段。红测试：R5(1) 邻域发起不提前解除、R5(2) 飞行期残留 seeked 不消费 latch 且 15s 无误报、R5(3) fetch 挂起 15s 超时报错；R1(1)/R1(2) 保持全绿。
+- **第三轮返工修复（2026-09-24 · R5、次要11 · 本任务侧）**：(R5-a) 落位三信号（目标邻域/采样跳变/`seeked`）与「本次 seek 真实落位」绑定——latch 增加 `applied` 标记，只有 `performSeek` resolve 成功之后才可消费，飞行期旧播放推进（哪怕已进目标 ±1s 邻域）按「代次 + applied」丢弃；对上一次 seek 残留 `scheduleSeekAlignment` clamp 触发的 `seeked`，当时仅有代次 + applied 两重校验——**该表述中的「一律丢弃」过强**：跨任务源乱序下残留 `seeked` 可能在本次 applied 之后才入队而被误消费（第四轮 R6-c）。现已补第三重归属校验：前次 apply 后 5s（补丁 clamp 链 20×250ms 上限）窗口内到达的 `seeked` 不作为本次落位信号，落位改由位置信号（目标邻域/采样跳变）兜底；(R5-1) 看门狗在 `seekTo` 发起即 `arm()`，覆盖 Range 网络扫描全阶段，真实恢复/失败/被新 seek 取代/卸载四条路径均终局 `disarm`；(R5-c) Range 请求挂起时 15s 内给出「seek 超时」显性错误与重试入口，不再永久 spinner；(次要11) 删除自 P3-c 起只写不读的 `seekResumeRef.from` 死字段。红测试：R5(1) 邻域发起不提前解除、R5(2) 飞行期残留 seeked 不消费 latch 且 15s 无误报、R5(3) fetch 挂起 15s 超时报错；R1(1)/R1(2) 保持全绿。
+
+- **第四轮返工修复（2026-09-24 · R6-a · 组件侧 + R6-c 归属窗口）**：(R6-a) 新增每次 seek 的 `AbortController`，**四条终局路径全部 abort 在途 seek**——看门狗超时/失败/被新 seek 取代/卸载；超时回调同时置 `abortedToken`，使迟到结果不会再用 `setSeekError(previous ?? …)` 覆盖或复活错误态；`onAborted` 收敛中态并在「媒体实际仍在正常播放（`!paused`）」时清除与真实播放矛盾的超时浮层，媒体停着则保留超时错误与重试入口（两种终态均与实际状态一致）；迟到成功（`ok` 但 latch 已终局）同样清除浮层。(R6-c) `seeked` 归属改为**三重校验**：代次 + `applied` + 「不处于前次 apply 后 5s 的补丁 clamp 残留窗口」，残留 `seeked` 不再能提前消费本次 latch，真实落位由目标邻域/采样跳变位置信号兜底。红测试：R5(4)、R6-c 两例；R1(1)/R1(2)/R5(1)–(3) 与 P1–P4 保持全绿。
 
 ### T14 全量验收 ✅
 

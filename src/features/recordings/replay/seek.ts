@@ -34,12 +34,16 @@ export interface TagBoundary {
 export type ApplySeek = (fileposition: number, milliseconds: number) => boolean | void;
 
 /**
- * 未缓冲 seek 的失败原因（供上层区分文案；`stale` 表示被后发起的 seek 取代，应静默丢弃）。
+ * 未缓冲 seek 的失败原因（供上层区分文案）：
+ * - `stale`：被后发起的 seek 取代 → 静默丢弃；
+ * - `aborted`：本次 seek 已被终局作废（超时/失败/卸载，AbortSignal 触发）→ 静默丢弃，
+ *   **绝不**再触碰媒体元素（审核 R6-a）。
  */
 export type SeekFailureReason =
   | "invalid"
   | "network"
   | "stale"
+  | "aborted"
   | "range-unsupported"
   | "window-oversized"
   | "scan-failed"
@@ -192,6 +196,12 @@ export interface SeekUnbufferedArgs {
   seekToByteOffset?: ApplySeek;
   /** 依赖注入点（默认全局 fetch）。 */
   fetchFn?: typeof fetch;
+  /**
+   * 终局作废信号（审核 R6-a）：超时/失败/被新 seek 取代/卸载时由上层 abort。
+   * 贯穿 Range 请求并在每个阶段边界（响应后/扫描后/apply 前）复查——
+   * 迟到的成功响应一律不再触碰媒体元素。
+   */
+  signal?: AbortSignal;
 }
 
 /** seek 代次：并发 seek 以 last-wins 丢弃过期探测结果。 */
@@ -208,11 +218,13 @@ async function defaultApplySeek(fileposition: number, milliseconds: number): Pro
  * `SeekOutcome`（`stale` 为被取代的过期探测，调用方须静默丢弃），不抛错、不静默冻结。
  */
 export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutcome> {
-  const { url, targetSeconds, durationSeconds, fileSize } = args;
+  const { url, targetSeconds, durationSeconds, fileSize, signal } = args;
   const applySeek = args.seekToByteOffset ?? ((f: number, ms: number) => defaultApplySeek(f, ms));
   const fetchFn = args.fetchFn ?? ((...input: Parameters<typeof fetch>) => fetch(...input));
   const generation = ++seekGeneration;
+  const aborted = () => signal?.aborted === true;
 
+  if (aborted()) return { ok: false, reason: "aborted" };
   if (!Number.isFinite(targetSeconds) || !Number.isFinite(durationSeconds)) return { ok: false, reason: "invalid" };
   if (durationSeconds <= 0 || fileSize <= 0) return { ok: false, reason: "invalid" };
 
@@ -222,12 +234,20 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutc
 
   let response: Response;
   try {
+    // AbortSignal 贯穿 Range 请求：终局作废即取消下载，不再空耗流量（审核 R6-a）
     response = await fetchFn(url, {
       headers: { Range: `bytes=${estimated}-${estimated + scanBytes - 1}` },
+      ...(signal ? { signal } : {}),
     });
   } catch (error) {
+    if (aborted()) return { ok: false, reason: "aborted" };
     console.error("[recordings] seek: Range 窗口请求失败", error);
     return { ok: false, reason: "network" };
+  }
+  // 迟到响应：本 seek 已被终局作废 → 取消响应体，不进入扫描/apply（审核 R6-a）
+  if (aborted()) {
+    await cancelBody(response);
+    return { ok: false, reason: "aborted" };
   }
   // 被后发起的 seek 取代：静默丢弃（调用方不得据此报错）
   if (generation !== seekGeneration) {
@@ -268,6 +288,8 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutc
     return { ok: false, reason: "scan-failed" };
   }
   if (generation !== seekGeneration) return { ok: false, reason: "stale" };
+  // apply 前最后复查：扫描期间被终局作废 → 绝不触碰媒体元素（审核 R6-a 不变量1）
+  if (aborted()) return { ok: false, reason: "aborted" };
 
   const boundary = scanResult.keyframe ?? scanResult.fallback;
   if (boundary) {
@@ -287,6 +309,7 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutc
   // 扫描未命中可信边界：降级按估算偏移直试。补丁接受即视为**发起成功**（实际是否恢复
   // 由上层看门狗兜底），补丁拒绝才判定失败——绝不把「已跳转」误报成失败（审核次要5）。
   console.error("[recordings] seek: 窗口内未找到可信 tag 边界，降级为估算偏移直试");
+  if (aborted()) return { ok: false, reason: "aborted" }; // 迟到响应同样不得降级直试（审核 R6-a）
   try {
     const applied = await applySeek(estimated, targetMs);
     if (applied === false) {
@@ -335,8 +358,10 @@ export class SeekWatchdog {
   ) {}
 
   arm(): void {
-    if (this.disposed) return;
-    this.clearTimer();
+    // 幂等且严格自计时（审核 R6-a 顺带决策点）：已武装时不再重置 15s 计时，
+    // 超时始终以「seekTo 发起」为起点，文案「15 秒内未恢复播放」与真实计时一致；
+    // 终局态（disarm/超时后）arm 一律为空操作，杜绝孤儿定时器。
+    if (this.disposed || this.timer !== null) return;
     this.timer = setTimeout(() => {
       this.timer = null;
       this.disposed = true; // 超时即终局：迟到的 arm 不得复活
@@ -367,16 +392,20 @@ export interface PerformSeekArgs {
   fileSize: number;
   seekToByteOffset?: ApplySeek;
   fetchFn?: typeof fetch;
+  /** 终局作废信号：贯穿到 `seekUnbuffered` 的 Range 请求与各阶段边界（审核 R6-a）。 */
+  signal?: AbortSignal;
   /** 进入 seek 中态（UI 显示 spinner、锁定进度条）。 */
   onSeeking?: () => void;
   /** 失败回调（含超时），用于显性错误提示 + 重试。 */
   onFailed: (reason: string) => void;
+  /** 本次 seek 已被终局作废（abort）时的静默回调：调用方据此收敛 UI，不报新错。 */
+  onAborted?: () => void;
   /** 看门狗（可注入；缺省自建 15s）。续播发生后由调用方 `disarm()`。 */
   watchdog?: SeekWatchdog;
 }
 
 /** 失败原因 → 面向用户的文案（区分真实原因，禁止一律归咎 Range，审核次要5）。 */
-const SEEK_FAILURE_MESSAGES: Record<Exclude<SeekFailureReason, "stale">, string> = {
+const SEEK_FAILURE_MESSAGES: Record<Exclude<SeekFailureReason, "stale" | "aborted">, string> = {
   invalid: "seek 失败：播放器未就绪或参数无效",
   network: "seek 失败：Range 窗口请求失败（网络错误）",
   "range-unsupported": "seek 失败：上游未支持 Range 请求",
@@ -389,7 +418,8 @@ const SEEK_FAILURE_MESSAGES: Record<Exclude<SeekFailureReason, "stale">, string>
  * seek 统一入口（技术方案 §3.3 五步）：
  * 1. 已缓冲 → 直接 `currentTime`（不发 Range）；
  * 2. 未缓冲 → `seekUnbuffered` 字节偏移续播，成功后武装 15s 看门狗；
- * 3. 失败按原因上报 `onFailed`；`stale`（被后发起的 seek 取代）静默丢弃，不误报。
+ * 3. 失败按原因上报 `onFailed`；`stale`（被取代）与 `aborted`（已终局作废）静默丢弃，
+ *    `aborted` 另走 `onAborted` 让调用方收敛 UI（审核 P3-b / R6-a）。
  */
 export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
   const { video, targetSeconds, durationSeconds, fileSize, url, onFailed } = args;
@@ -411,13 +441,17 @@ export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
     fileSize,
     ...(args.seekToByteOffset ? { seekToByteOffset: args.seekToByteOffset } : {}),
     ...(args.fetchFn ? { fetchFn: args.fetchFn } : {}),
+    ...(args.signal ? { signal: args.signal } : {}),
   });
 
   if (!outcome.ok) {
-    // 过期 seek：静默丢弃，不得污染最终 seek 的 UI 状态（审核 P3-b）
-    if (outcome.reason !== "stale") {
-      onFailed(SEEK_FAILURE_MESSAGES[outcome.reason ?? "invalid"]);
+    if (outcome.reason === "stale") return false; // 被后发起 seek 取代：静默（审核 P3-b）
+    if (outcome.reason === "aborted") {
+      // 已终局作废（超时/失败/卸载）：不报新错，仅回调让调用方收敛 UI（审核 R6-a）
+      args.onAborted?.();
+      return false;
     }
+    onFailed(SEEK_FAILURE_MESSAGES[outcome.reason ?? "invalid"]);
     return false;
   }
 

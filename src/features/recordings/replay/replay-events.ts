@@ -54,7 +54,7 @@ export interface CreateReplayEventsStoreOptions {
   roomId: number | null;
   /** 分段实际起点毫秒（`segmentBoundsForFile` 推导）；null 时禁用取数。 */
   startMs: number | null;
-  /** 分段实际终点毫秒；未知时以 start + 12h 为上界。 */
+  /** 分段实际终点毫秒；未知时按 start + 单窗 10min 逐窗推进，不设绝对上界（审核 R6-b / 次要2）。 */
   endMs?: number | null;
   /** 依赖注入点（默认走 `fetchLiveEvents`）。 */
   fetchEvents?: FetchEvents;
