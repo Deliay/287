@@ -2,7 +2,7 @@
 
 - 版本：v1.0
 - 创建日期：2026-09-23
-- 状态：待评审
+- 状态：已通过评审
 
 ## 1. 对应上游文档
 
@@ -42,6 +42,8 @@ src/
 │   ├── member-section.tsx      # 单个成员介绍区（Server Component）
 │   ├── member-section.module.css
 │   └── smooth-scroll.tsx       # lenis 初始化封装（Client Component，"use client"）
+├── lib/
+│   └── lenis.ts                # lenis 实例持有（getLenis/setLenis），SmoothScroll 注册、SiteHeader 回顶复用（风险 §5-1）
 public/
 └── images/members/             # 从 resources/ 复制的 4 张 avif 立绘（viridis/komichi/chu2u/sumire）
 tests/（或 src 内就近 *.test.tsx） # Vitest 单测
@@ -68,7 +70,7 @@ tests/（或 src 内就近 *.test.tsx） # Vitest 单测
 
 **阻尼滚动**：`smooth-scroll.tsx` 为 Client Component，`useEffect` 内 `new Lenis({ autoRaf: true })`，卸载时 `destroy()`。**仅在 PC 启用**（`window.matchMedia('(min-width: 48em)')` 判断，移动端保留原生触屏惯性滚动，避免滚动劫持问题；需求中阻尼感针对 PC 滚轮场景）。降级：lenis 初始化失败或被移除时，页面滚动行为退化为原生，不影响任何内容可达性。
 
-**立绘展示**：`next/image` + `fill` + `object-fit: cover` + `object-position: top` 裁切上半身；首屏 4 张设 `priority`；`Member` 数据预留 `imagePosition` 字段用于按成员微调构图（见风险 §5-2）。介绍区半身像同理，移动端经同一 CSS 变量调整。
+**立绘展示**：`next/image` + `fill` + `object-fit: cover`（fill 不会自动设 cover，需显式声明）+ `object-position` 裁切上半身；首屏 4 张设 `priority`；`Member` 数据预留 `imagePosition` 字段用于按成员微调构图（见风险 §5-2）。全身图在 cover 基础上以顶部锚点缩放（CSS transform）收紧到「上半身（首屏）/半身（介绍区）」，缩放系数按断点区分。介绍区半身像同理，移动端经同一 CSS 变量调整。
 
 **图片资源**：`resources/*.avif` 是资料源文件，不入 `public` 无法被 Next 直接服务；复制（非移动）到 `public/images/members/`，`resources/` 保持资料归档语义不变。
 
@@ -142,4 +144,4 @@ export const members: Member[]; // 顺序固定：viridis, komichi, chu2u, sumir
 
 | 评审人 | 日期 | 结论 | 备注 |
 |--------|------|------|------|
-| （待填写） | | | |
+| Deliay | 2026-09-23 | 通过 | PR #1；口头评审通过，记录于开发启动前回填 |

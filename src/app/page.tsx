@@ -1,12 +1,20 @@
-import { Container, Text, Title } from "@mantine/core";
+import { HeroWall } from "@/components/hero-wall";
+import { MemberSection } from "@/components/member-section";
+import { SiteHeader } from "@/components/site-header";
+import { SmoothScroll } from "@/components/smooth-scroll";
+import { members } from "@/data/members";
 
 export default function Home() {
   return (
-    <Container py="xl">
-      <Title order={1}>287 应援站</Title>
-      <Text c="dimmed" mt="sm">
-        VirtuaReal 二十八期粉丝站 · 站点建设中
-      </Text>
-    </Container>
+    <>
+      <SiteHeader />
+      <SmoothScroll />
+      <main>
+        <HeroWall members={members} />
+        {members.map((member, index) => (
+          <MemberSection key={member.id} member={member} index={index} />
+        ))}
+      </main>
+    </>
   );
 }

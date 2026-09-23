@@ -1,0 +1,86 @@
+.wall {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  box-sizing: border-box;
+  /* 首屏顶部预留导航栏安全区，避免立绘面部被导航栏遮挡（设计 §2.3） */
+  padding-top: var(--site-header-height);
+  overflow: hidden;
+}
+
+.panel {
+  position: relative;
+  display: block;
+  flex: 1 1 25%;
+  overflow: hidden;
+  /* 立绘裁切构图：移动端 cover 天然裁到上半身，PC 端按顶部锚点放大 */
+  --art-zoom: 1;
+  --art-pos: 50% 0%;
+  transition: filter 300ms ease-out;
+}
+
+.art {
+  object-fit: cover;
+  object-position: var(--art-pos);
+  transform: scale(var(--art-zoom));
+  transform-origin: var(--art-pos);
+  transition: transform 300ms ease-out, filter 300ms ease-out;
+}
+
+.meta {
+  position: absolute;
+  inset: auto 0 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+  padding: var(--mantine-spacing-lg) var(--mantine-spacing-md)
+    var(--mantine-spacing-sm);
+  background: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--mantine-color-night287-9) 85%, transparent),
+    transparent
+  );
+}
+
+.name {
+  color: var(--mantine-color-night287-0);
+  font-weight: 600;
+  font-size: var(--mantine-font-size-md);
+}
+
+.roman {
+  margin-left: 0.35em;
+  color: var(--mantine-color-night287-2);
+  font-weight: 500;
+}
+
+.bar {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 4px;
+  background: var(--member-accent);
+}
+
+@media (min-width: $mantine-breakpoint-sm) {
+  .wall {
+    flex-direction: row;
+  }
+
+  .panel {
+    --art-zoom: 2;
+  }
+
+  /* hover 灰化：纯 CSS，悬停列恢复并放大提亮，其余列灰化 */
+  .wall:hover .panel {
+    filter: grayscale(1) brightness(0.6);
+  }
+
+  .wall:hover .panel:hover {
+    filter: none;
+  }
+
+  .wall:hover .panel:hover .art {
+    transform: scale(calc(var(--art-zoom) * 1.03));
+    filter: brightness(1.05);
+  }
+}
