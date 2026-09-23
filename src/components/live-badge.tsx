@@ -13,7 +13,7 @@ const TITLE_ELLIPSIS_THRESHOLD = 16;
 
 /**
  * 直播状态徽章（Client 孤岛，HeroWall / MemberSection 内嵌）。
- * 三态：加载中占位骨架 / 开播显示直播标题（可点击）/ 未开播纯文本（不可点击）。
+ * 三态：加载中占位骨架 / 开播显示「正在直播：{标题}」（可点击）/ 未开播纯文本（不可点击）。
  */
 export function LiveBadge({ member }: LiveBadgeProps) {
   const { status } = useLiveStatus(member.id);

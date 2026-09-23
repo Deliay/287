@@ -45,7 +45,8 @@ export function HeroWall({ members }: HeroWallProps) {
             />
           </a>
           <div className={styles.meta}>
-            {/* 徽章槽恢复指针事件：meta 其余区域点击穿透到下方覆盖式锚点 */}
+            {/* 徽章槽不接管命中（R4）：与 meta 一起点击穿透到下方覆盖式锚点；
+                开播徽章由 live-badge 的 .living 显式 auto 接管点击 */}
             <span className={styles.badgeSlot}>
               <LiveBadge member={member} />
             </span>
