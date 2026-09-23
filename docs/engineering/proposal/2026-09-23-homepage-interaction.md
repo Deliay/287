@@ -19,6 +19,7 @@
 | 状态共享（首屏与介绍区一致） | 模块级状态缓存 + 自定义 Hook（`useLiveStatus`） | 同一成员的接口在页面生命周期内只请求一次，HeroWall 与 MemberSection 复用同一份 Promise/结果（AC-5）；React Context 对纯读取场景过重，模块缓存最简单 |
 | 站内锚点跳转 | `id` 锚点 + `lenis.scrollTo` | 一期已存在 `src/lib/lenis.ts` 的实例注册机制，直接扩展复用；保留无 JS/降级时的原生锚点行为 |
 | 逐屏吸附滚动 | lenis `snap` 能力（lenis ≥ 1.1 内置）或 CSS `scroll-snap` 兜底 | 与既有阻尼滚动同源实现，避免两套滚动逻辑打架；详见 §5-1 的权衡 |
+| 开发环境跨域 | `next dev` 本地代理（`next.config.ts` 中仅开发态生效的 `rewrites`） | 线上域名 287.live 已加入 `api.sumire.live` 的 CORS 白名单，线上直连无问题；仅本地开发（`localhost`）存在跨域，用 dev server 代理将 `/api/live/*` 转发到接口域名即可，无需引入代理工具或改接口方 |
 
 **新依赖必要性说明**：无新增依赖。若现有 lenis 版本不支持 snap（需核实 `pnpm-lock.yaml`），首选升级 lenis 补丁/次版本，其次降级为 CSS scroll-snap 方案。
 
@@ -27,23 +28,24 @@
 ### 3.1 模块划分（在现有结构上的增量）
 
 ```
+next.config.ts                  # 增加仅开发态生效的 rewrites：/api/live/* 代理到 api.sumire.live
 src/
 ├── app/
 │   └── page.tsx                # 不变：HeroWall + 4×MemberSection 的组装结构保留
 ├── data/
-│   └── members.ts              # Member 增加 liveStatusUrl、liveRoomUrl（待 T1 确认）字段
+│   └── members.ts              # Member 增加 liveStatusUrl（接口路径）、liveUrl（待 T1 确认）字段
 ├── lib/
 │   ├── lenis.ts                # 扩展 ScrollToTop 接口：scrollTo 支持 string target（锚点）
-│   └── live-status.ts          # 新增：状态拉取与模块级缓存（每成员一次请求）
+│   └── live-status.ts          # 新增：状态拉取与模块级缓存（每成员一次请求；按环境拼接接口 base）
 ├── components/
-│   ├── hero-wall.tsx           # 改为 Client Component：a→站内锚点；名字上方挂 <LiveBadge>
+│   ├── hero-wall.tsx           # 保持 Server Component：a→站内锚点；名字上方嵌入 <LiveBadge>（Client 孤岛）
 │   ├── member-section.tsx      # 增加 <LiveBadge>；section 增加 id 锚点
 │   ├── live-badge.tsx          # 新增：直播状态徽章（Client Component）
 │   ├── live-badge.module.css   # 新增
 │   ├── smooth-scroll.tsx       # lenis 增加 snap 配置（介绍区逐屏吸附）
 │   └── ...
 tests/
-├── live-status.test.ts         # 新增：拉取/缓存/降级逻辑
+├── live-status.test.ts         # 新增：拉取/缓存/降级/环境 base 拼接逻辑
 ├── live-badge.test.tsx         # 新增：开播/未开播/失败三态渲染
 └── （hero-wall / member-section / smooth-scroll 既有用例同步更新）
 ```
@@ -85,9 +87,9 @@ const cache = new Map<string, Promise<LiveStatus>>();
 export function fetchLiveStatus(memberId: Member["id"]): Promise<LiveStatus>;
 ```
 
-- **防御性解析**（应对需求 §7-T2 未确认）：响应 JSON 的字段名按约定推断（如 `living`/`live_status`、`title`），任何字段缺失或类型不符都降级为 `{ living: false, title: null }`，绝不抛异常到组件层。
-- 请求失败（网络错误、非 2xx、CORS 被拦、超时 ~5s `AbortSignal.timeout`）同样降级为未开播态。
-- 接口地址硬编码于 `members.ts` 数据中（四个地址是需求给定常量，不做环境配置）。
+- **防御性解析**（应对需求 §7-T2 响应结构未确认）：响应 JSON 的字段名按约定推断（如 `living`/`live_status`、`title`），任何字段缺失或类型不符都降级为 `{ living: false, title: null }`，绝不抛异常到组件层。
+- 请求失败（网络错误、非 2xx、超时 ~5s `AbortSignal.timeout`）同样降级为未开播态。
+- **请求地址分环境**：`members.ts` 中 `liveStatusUrl` 记录接口的**路径部分**（如 `/api/live/viridis/status`）；`live-status.ts` 拼接 base——生产环境直连 `https://api.sumire.live`（287.live 已在 CORS 白名单），开发环境走相对路径，由 `next dev` 的本地代理转发（`next.config.ts` 中开发态 `rewrites`：`/api/live/:path*` → `https://api.sumire.live/api/live/:path*`），本地开发无跨域问题。
 
 **LiveBadge 组件**：三态渲染——加载中（骨架/占位，避免布局跳动）、开播（直播标题，截断溢出）、未开播（「未开播」）。点击行为：开播时跳转直播入口（T1 未确认前默认 `member.bilibili` 主页，新标签页）；未开播时不可点击（渲染为非链接元素）。
 
@@ -100,7 +102,7 @@ export function fetchLiveStatus(memberId: Member["id"]): Promise<LiveStatus>;
 ```ts
 export interface Member {
   // ...既有字段不变
-  /** 直播状态接口地址（需求 §7） */
+  /** 直播状态接口路径（需求 §7），如 /api/live/viridis/status；base 由 live-status.ts 按环境拼接（生产直连 api.sumire.live，开发走本地代理） */
   liveStatusUrl: string;
   /** 直播入口链接（开播时点击徽章跳转目标，待需求 T1 确认；默认同 bilibili） */
   liveUrl?: string;
@@ -127,7 +129,7 @@ export interface Member {
 | # | 风险 | 影响 | 缓解 / 取舍 |
 |---|------|------|-------------|
 | 1 | lenis 拦截滚动与 snap 吸附叠加，可能出现吸附抖动或锚点跳转被劫持 | FR-4 体验受损 | snap 点计算收敛在 SmoothScroll 一处；锚点跳转统一走 lenis 实例；若联调不达标，回退 CSS `scroll-snap`（proximity），lenis 仅保留阻尼 |
-| 2 | `api.sumire.live` 未开 CORS，浏览器跨域请求被拦 | FR-2/3 整块失效 | 静态导出无服务端可代理；防御性降级保证页面其余功能不受影响（AC-4）；评审前需实测确认 CORS（需求 T2），若被拦则需接口方加白名单或改为构建期注入快照（牺牲实时性，备选） |
+| 2 | ~~`api.sumire.live` 未开 CORS~~ **已消除**（评审确认）：线上域名 287.live 已加入接口 CORS 白名单；仅本地开发（`localhost`）跨域 | 开发环境联调受阻 | 开发环境经 `next dev` 本地代理转发 `/api/live/*`（见 §2/§3.3）；线上直连；防御性降级兜底保留（AC-4） |
 | 3 | 接口响应结构未确认（T2） | 解析错误导致状态恒为未开播 | 防御性解析 + 单测覆盖多种假设结构；联调阶段以真实响应校准，偏差时仅需改解析层一处 |
 | 4 | HeroWall 从 Server 转 Client（因 LiveBadge 交互） | 首屏 JS 体积微增 | 优先方案：HeroWall 保持 Server，仅 LiveBadge 为 Client 孤岛嵌入；点击锚点跳转用原生 `href="#..."` + lenis 全局监听 hash 点击，无需 HeroWall 客户端化 |
 | 5 | 滚动吸附与移动端触屏惯性冲突 | AC-7 不达标 | 移动端仅用 CSS `proximity` 吸附，不启用 lenis；真机验收 |
@@ -147,7 +149,7 @@ export interface Member {
 | AC-6/AC-7（吸附滚动） | smooth-scroll 单测：lenis 初始化参数包含 snap 配置（mock lenis 构造函数断言）；吸附手感与各断点实际效果**人工验收** |
 | AC-8（回归） | `pnpm test` / `pnpm lint` / `pnpm build` 全绿；既有导航、调色盘、介绍区内容用例不受影响 |
 
-**人工验收项**：吸附滚动手感（PC 滚轮 / 移动端触屏）、徽章视觉与截断溢出、真实接口联调（开播/未开播实际切换）、CORS 实测。
+**人工验收项**：吸附滚动手感（PC 滚轮 / 移动端触屏）、徽章视觉与截断溢出、真实接口联调（开播/未开播实际切换）、开发环境本地代理可用性验证。
 
 ## 7. 评审记录
 
