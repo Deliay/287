@@ -16,12 +16,14 @@
   /* 立绘裁切构图：移动端 cover 天然裁到上半身，PC 端按顶部锚点放大 */
   --art-zoom: 1;
   --art-pos: 50% 0%;
+  --art-pos-mobile: 50% 0%;
   transition: filter 300ms ease-out;
 }
 
 .art {
   object-fit: cover;
   object-position: top;
+  object-view-box: xywh(var(--art-pos-mobile) 100% 100%);
   transition: transform 300ms ease-out, filter 300ms ease-out;
 }
 
@@ -80,6 +82,7 @@
   .art {
     transform: scale(var(--art-zoom));
     transform-origin: var(--art-pos);
+    object-view-box: unset;
   }
 
   .wall:hover .panel:hover .art {

@@ -16,6 +16,10 @@ export interface Member {
   imagePosition?: string;
   /** next/image object-position，默认 "50% 0%"，可按成员微调 */
   imagePositionDetail?: string;
+  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  imagePositionMobileHero?: string;
+  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  imagePositionMobileDetail?: string;
   /** B 站主页 UID 直链 */
   bilibili: string;
 }
@@ -32,6 +36,8 @@ export const members: Member[] = [
     image: "/images/members/viridis.avif",
     imagePosition: "5% -15%",
     imagePositionDetail: "52% 0%",
+    imagePositionMobileHero: "-15% 5%",
+    imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/1891335475",
   },
   {
@@ -45,6 +51,8 @@ export const members: Member[] = [
     image: "/images/members/komichi.avif",
     imagePosition: "35% 0%",
     imagePositionDetail: "38% 0%",
+    imagePositionMobileHero: "0% 10%",
+    imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/1512246445",
   },
   {
@@ -58,6 +66,8 @@ export const members: Member[] = [
     image: "/images/members/chu2u.avif",
     imagePosition: "5% -15%",
     imagePositionDetail: "50% 1%",
+    imagePositionMobileHero: "-15% 0%",
+    imagePositionMobileDetail: "0% 0%",
     bilibili: "https://space.bilibili.com/2138961136",
   },
   {
@@ -70,7 +80,9 @@ export const members: Member[] = [
     colorKey: "sumire",
     image: "/images/members/sumire.avif",
     imagePosition: "-25% -15%",
-    imagePositionDetail: "37% 0%",
+    imagePositionDetail: "75% 0%",
+    imagePositionMobileHero: "-35% 3%",
+    imagePositionMobileDetail: "-50% 0%",
     bilibili: "https://space.bilibili.com/1150976664",
   },
 ];

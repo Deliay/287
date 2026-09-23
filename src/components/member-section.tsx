@@ -20,21 +20,13 @@ export function MemberSection({ member, index }: MemberSectionProps) {
       style={
         {
           "--art-pos": member.imagePositionDetail ?? member.imagePosition ?? "50% 0%",
+          "--art-pos-mobile": member.imagePositionMobileDetail ?? member.imagePositionMobileHero ?? "50% 0%",
           /* 成员色强调均引用主题 token，不硬编码色值 */
           "--member-accent": `var(--mantine-color-${member.colorKey}-6)`,
           "--member-heading": `var(--mantine-color-${member.colorKey}-2)`,
         } as CSSProperties
       }
     >
-      <div className={styles.figure}>
-        <Image
-          src={member.image}
-          alt={`${member.name} 立绘`}
-          fill
-          sizes="(min-width: 48em) 40vw, 100vw"
-          className={styles.art}
-        />
-      </div>
       <div className={styles.content}>
         <h2 id={headingId} className={styles.name}>
           {member.name}
@@ -50,6 +42,15 @@ export function MemberSection({ member, index }: MemberSectionProps) {
         >
           前往 B 站主页 →
         </a>
+      </div>
+      <div className={styles.figure}>
+        <Image
+          src={member.image}
+          alt={`${member.name} 立绘`}
+          fill
+          sizes="(min-width: 48em) 40vw, 100vw"
+          className={styles.art}
+        />
       </div>
     </section>
   );

@@ -7,6 +7,8 @@
   /* 立绘半身裁切：cover 基础上按顶部锚点放大（设计 §2.5） */
   --art-zoom: 1.3;
   --art-pos: 50% 0%;
+  --art-pos-mobile: 50% 0%;
+  padding-top: var(--site-header-height);
 }
 
 /* 奇数区（第 1、3 区）：287-9 页面底色 */
@@ -23,13 +25,14 @@
   position: relative;
   height: 50dvh;
   overflow: hidden;
+  margin-top: auto;
 }
 
 .art {
   object-fit: cover;
-  object-position: var(--art-pos);
+  object-position: var(--art-pos-mobile);
   transform: scale(var(--art-zoom));
-  transform-origin: var(--art-pos);
+  transform-origin: var(--art-pos-mobile);
 }
 
 .content {
@@ -75,6 +78,8 @@
   border-radius: var(--mantine-radius-md);
   font-weight: 600;
   transition: filter 200ms ease-out;
+  width: 50%;
+  margin-left: 50%;
 }
 
 .cta:hover {
@@ -95,11 +100,13 @@
     align-self: stretch;
     width: 40%;
     height: auto;
+    margin-top: unset;
   }
 
   .content {
     width: 60%;
     padding: var(--mantine-spacing-xl)
       clamp(var(--mantine-spacing-md), 5vw, 5rem);
+    align-items: flex-end;
   }
 }
