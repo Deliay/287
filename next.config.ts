@@ -7,6 +7,19 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // 开发态代理直播状态接口（生产经 CORS 白名单直连，本地 localhost 不在白名单内）。
+  // 静态导出构建期 NODE_ENV=production 返回空数组：rewrites 不参与导出产物（技术方案 §2）。
+  async rewrites() {
+    if (process.env.NODE_ENV !== "development") {
+      return [];
+    }
+    return [
+      {
+        source: "/api/live/:path*",
+        destination: "https://api.sumire.live/api/live/:path*",
+      },
+    ];
+  },
 };
 
 export default nextConfig;

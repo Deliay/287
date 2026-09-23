@@ -44,13 +44,13 @@
 - 文件：`src/lib/live-status.ts`（新增）、`tests/live-status.test.ts`（新增）
 - 内容：
   - `export interface LiveStatus { living: boolean; title: string | null }`
-  - `fetchLiveStatus(memberId): Promise<LiveStatus>`：按环境拼接 base（`process.env.NODE_ENV === "development"` 走相对路径 `/api/live/...`，否则直连 `https://api.sumire.live`）；模块级 `Map<memberId, Promise<LiveStatus>>` 缓存，**失败结果也缓存**（避免重复打挂接口）；5s `AbortSignal.timeout`；防御性解析——按实测结构 `{"ok":true,"status":{"live":boolean,"title":string}}` 取 `status.live`/`status.title`，字段缺失/类型不符/网络错误/非 2xx 一律 resolve `{ living: false, title: null }`，绝不抛异常。
+  - `fetchLiveStatus(memberId): Promise<LiveStatus>`：按环境拼接 base（`process.env.NODE_ENV === "development"` 走相对路径 `/api/live/...`，否则直连 `https://api.sumire.live`）；模块级 `Map<memberId, Promise<LiveStatus>>` 缓存，**失败结果也缓存**（避免重复打挂接口）；5s `AbortSignal.timeout`；防御性解析——按实测结构 `{"ok":true,"status":{"live":boolean,"title":string}}` 取 `status.live`/`status.title`，字段缺失/类型不符/**取值无效（`title` 为空或纯空白）**/网络错误/非 2xx 一律 resolve `{ living: false, title: null }`，绝不抛异常。
   - `useLiveStatus(memberId): { status: LiveStatus | null }`（`null` = 加载中）：Client Hook，mount 时调用 `fetchLiveStatus` 并 setState。
 - TDD（mock 全局 `fetch`）：
   - 红/绿用例清单：
     1. 开播响应（`live:true` + title）→ resolve `{ living: true, title }`；
     2. 未开播响应（`live:false`）→ resolve `{ living: false, title: null }`；
-    3. fetch reject / 非 2xx / 畸形 JSON / 字段缺失 → 均 resolve 未开播态且不抛出（AC-4）；
+    3. fetch reject / 非 2xx / 畸形 JSON / 字段缺失 → 均 resolve 未开播态且不抛出（AC-4）；**`live:true` 但 `title` 为空/纯空白字符串同样降级未开播**（Review 返工 P2-1，避免渲染内容为空的开播链接）；
     4. 同 memberId 连续两次调用，`fetch` 只被调用一次，两个 Promise 同一结果（AC-5 单次请求）；
     5. 不同 memberId 各自独立请求；
     6. base 拼接：mock `NODE_ENV` 为 development 时请求相对路径，production 时请求 `https://api.sumire.live` 绝对地址；
@@ -63,26 +63,29 @@
 - 文件：`src/components/live-badge.tsx` + `live-badge.module.css`（新增）、`tests/live-badge.test.tsx`（新增）
 - 内容：Client Component，props `{ member: Member }`，内部 `useLiveStatus`。三态渲染：
   - 加载中：占位骨架（固定高度，避免布局跳动）；
-  - 开播：显示直播标题（CSS `text-overflow: ellipsis` 截断），整体渲染为 `<a href={member.liveUrl ?? member.bilibili} target="_blank" rel="noopener noreferrer">`（T1 未确认前默认 B 站主页）；
+  - 开播：可见文本以「正在直播」开头、后接直播标题（CSS `text-overflow: ellipsis` 截断，「正在直播」前缀不被截掉），整体渲染为 `<a href={member.liveUrl ?? member.bilibili} target="_blank" rel="noopener noreferrer">`（T1 未确认前默认 B 站主页）；配色跟随成员代表色——开播态主色取容器内联的 `var(--member-accent)`，不得硬编码全站统一色（2026-09-23 下游验收返工）；
   - 未开播：纯文本「未开播」，**非链接**、不可点击。
   - 可访问性：徽章带可读文本与 `aria-label`（如「Viridis 正在直播：{title}」/「Viridis 未开播」），不依赖颜色传达状态。
 - TDD（`vi.mock` `@/lib/live-status` 的 `useLiveStatus` 返回三种状态）：
   1. 加载中渲染占位、无链接；
   2. 开播渲染标题文本且为链接、`href` 为成员 B 站主页、新标签页（AC-2/AC-3）；
   3. 未开播渲染「未开播」且非链接（`queryByRole("link")` 为 null）；
-  4. 标题过长时挂载截断 class（结构断言）。
+  4. 标题过长时挂载截断 class（结构断言）；
+  5.（2026-09-23 下游验收返工）开播态可见文本以「正在直播」开头且包含直播标题（前缀完整可见）；
+  6.（2026-09-23 下游验收返工）开播态样式使用 `var(--member-accent)` 成员代表色（结构断言：`.living` 规则引用 `--member-accent`，不硬编码固定色板值）。
 - 依赖：T3。
 
 ### T5 HeroWall 锚点跳转改造 + 首屏徽章（src/components/hero-wall.tsx）
 
-- 文件：`src/components/hero-wall.tsx`、`hero-wall.module.css`（徽章位置样式）、`tests/hero-wall.test.tsx`（改）
+- 文件：`src/components/hero-wall.tsx`、`hero-wall.module.css`（面板结构与徽章槽样式）、`tests/hero-wall.test.tsx`（改）
 - 内容：
-  - `<a>` 的 `href` 改为 `#member-{id}`，**移除** `target="_blank"` 与 `rel`；保留 Server Component（不引交互逻辑，锚点平滑滚动由 T6 全局监听处理）。
+  - 每格改为 **`div.panel` 容器 + 覆盖式 `a.panelLink[href="#member-{id}"]`（absolute inset:0 铺满面板，内含立绘）**，**移除** `target="_blank"` 与 `rel`；meta 区（徽章 + 名字）为锚点的兄弟节点：`pointer-events: none` 让点击穿透到下方锚点，徽章槽 `pointer-events: auto` 保持徽章可点。保留 Server Component（不引交互逻辑，锚点平滑滚动由 T6 全局监听处理）。
+  - **禁止 `<a>` 嵌套 `<a>`**：开播态 LiveBadge 自身是 `<a>`，不得放入面板锚点子树（HTML 内容模型 + React validateDOMNesting + SSR 解析器拆链，Review P1-1）。
   - meta 区成员名字**上方**嵌入 `<LiveBadge member={member} />`。
 - TDD（先改既有测试为红）：
-  1. 四项 `href` 依次为 `#member-viridis/#member-komichi/#member-chu2u/#member-sumire`，且无 `target="_blank"`（替换原 B 站直链断言，AC-1）；
-  2. 每个面板内渲染 LiveBadge（mock LiveBadge 为桩组件，断言每面板一个且位于名字之前——`compareDocumentPosition` 或 DOM 顺序断言，AC-2）；
-  3. 既有立绘 alt、hover class、名称可读用例保持绿色。
+  1. 四项面板锚点 `href` 依次为 `#member-viridis/#member-komichi/#member-chu2u/#member-sumire`，且无 `target="_blank"`（AC-1）；
+  2. **不 mock LiveBadge**（改 mock `@/lib/live-status` 返回开播态，用真实组件）：断言 `container.querySelector("a a")` 为 `null`（P1-1 回归用例），且每面板一个徽章、位于名字之前（DOM 顺序断言，AC-2）；
+  3. 既有立绘 alt、hover class、名称可读用例改挂到 `div.panel` 后保持绿色。
 - 依赖：T4。
 
 ### T6 lenis 锚点平滑滚动（src/lib/lenis.ts）
@@ -110,7 +113,7 @@
 
 - 文件：`src/components/smooth-scroll.tsx`、`src/app/globals.css`（或对应样式文件，移动端 scroll-snap）、`tests/smooth-scroll.test.tsx`（扩展）
 - 内容：
-  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；`resize` 时重算；卸载时清理。
+  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("section[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；选择器限定 `section` 元素，避免误命中介绍区标题 `id="member-{id}-heading"`（实现期细化，2026-09-23）；偏移量按技术方案 §3.3 用 **`getBoundingClientRect().top + window.scrollY`** 计算（**不用 `offsetTop`**：它相对 `offsetParent`，一旦出现定位祖先即算错，Review 返工 P2-2）；吸附类型取 `proximity`：仅在接近介绍区中心（默认阈值 50% 视口）时吸附，首屏小幅度滚动不会被强行拽走，同时满足 AC-6 越过半屏即落位；`resize` 时重算；卸载时清理。
   - 移动端（< 48em，不启用 lenis）：介绍区容器 CSS `scroll-snap-type: y proximity` + 各 section `scroll-snap-align: center`（proximity 保跟手性，对应 AC-7）。
   - 若开发时发现 lenis 1.3.26 snap API 与预期不符或联调抖动：回退为 PC 也用 CSS scroll-snap，lenis 仅保留阻尼（技术方案 §5-1 既定取舍），此变更需回本文件标记。
 - TDD：
@@ -123,6 +126,7 @@
 ### T9 回归与整体验收
 
 - 内容：`pnpm test`、`pnpm lint`、`pnpm build` 全绿（AC-8）；人工验收：真实接口开播/未开播切换、开发代理可用性（T1）、吸附手感、徽章视觉截断。
+- 返工补充（2026-09-23 Review）：新增集成用例 `tests/live-status-integration.test.tsx`——HeroWall + 4×MemberSection 同页渲染 8 枚徽章只产生 4 次请求且同成员状态一致（AC-5 缓存共享回归，Review P2-3）。
 - 依赖：全部任务完成。
 
 ## 4. 执行顺序与依赖图
@@ -143,7 +147,7 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 需求验收 | 覆盖任务 | 验证方式 |
 |----------|----------|----------|
 | AC-1 站内锚点跳转 | T5、T6、T7 | hero-wall 用例断言 `#member-{id}` 无 `_blank`；member-section 用例断言 `id`；T6 用例断言 lenis.scrollTo 拦截；T9 人工点验 |
-| AC-2 首屏徽章三态 | T4、T5 | live-badge 用例（mock 开播/未开播）+ hero-wall 桩断言 |
+| AC-2 首屏徽章三态（开播文案「正在直播」前缀 + 成员代表色配色） | T4、T5 | live-badge 用例（mock 开播/未开播，断言前缀文案与 `.living` 引用 `--member-accent`）+ hero-wall 桩断言 |
 | AC-3 徽章点击跳转 | T4 | live-badge 用例：开播为链接（默认 B 站主页，待 T1 确认后改 `liveUrl`）、未开播非链接 |
 | AC-4 失败降级 | T3 | live-status 用例：reject/非 2xx/畸形 JSON 均 resolve 未开播且不抛 |
 | AC-5 一致性与单次请求 | T3、T5、T7 | live-status 用例：同 memberId 只 fetch 一次；两处共用 `useLiveStatus` 天然同源 |
@@ -163,12 +167,85 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 
 | 任务 | 状态 | 备注 |
 |------|------|------|
-| T1 开发环境接口代理 | ☐ | |
-| T2 成员数据扩展 | ☐ | |
-| T3 直播状态拉取与缓存 | ☐ | |
-| T4 LiveBadge 组件 | ☐ | |
-| T5 HeroWall 锚点 + 徽章 | ☐ | |
-| T6 lenis 锚点平滑滚动 | ☐ | |
-| T7 MemberSection 锚点 + 徽章 | ☐ | |
-| T8 逐屏吸附滚动 | ☐ | |
-| T9 回归与整体验收 | ☐ | |
+| T1 开发环境接口代理 | ☑ | `next.config.ts` 增加按 `NODE_ENV` 判定的 rewrites；`next dev` 实测 `/api/live/viridis/status` 返回 200；构建期返回空数组，`next build` 仅打印 export 不支持 rewrites 的提示，产物不受影响 |
+| T2 成员数据扩展 | ☑ | 四成员逐值断言 `liveStatusUrl`；`liveUrl` 留待需求 T1 确认后再填 |
+| T3 直播状态拉取与缓存 | ☑ | 7 条用例全绿；实测响应 `{ok,status:{live,title}}` 与解析一致 |
+| T4 LiveBadge 组件 | ☑ | 三态渲染 + 标题截断阈值 16 字，5 条用例全绿 |
+| T5 HeroWall 锚点 + 徽章 | ☑ | 既有 B 站直链断言按风险 #6 预期改写（红→绿） |
+| T6 lenis 锚点平滑滚动 | ☑ | 拦截收敛在 SmoothScroll 的 document 点击监听；`event.defaultPrevented` 与「最近祖先链接非 #」两种情况均放行 |
+| T7 MemberSection 锚点 + 徽章 | ☑ | `id="member-{id}"` + 徽章位于 cta 上方 |
+| T8 逐屏吸附滚动 | ☑ | 选择器细化为 `section[id^='member-']`（见 T8 条目说明）；移动端 CSS proximity + section center 结构断言全绿 |
+| T9 回归与整体验收 | ☑ | `pnpm test`（初版 54 用例，返工后 **56 用例**）、`pnpm lint`、`pnpm build` 全绿；开发代理与 SSR 结构（锚点/section id/徽章骨架/无嵌套链接）已点验。**人工验收待人类执行**：真实接口开播态视觉、PC 吸附手感、移动端真机触屏手感 |
+
+### 返工记录（2026-09-23，Review 打回 P1-1 / P2 系列）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| P1-1 面板 `<a>` 内嵌开播态徽章 `<a>`（无效嵌套） | 采用建议 b+c：面板改 `div.panel` + 覆盖式 `a.panelLink`，徽章槽移到锚点子树之外；点击分层用 `pointer-events` 实现 | T5 用例改为**不 mock LiveBadge**，断言 `querySelector("a a")` 为 `null` |
+| P2-1 `parseStatus` 空标题判为开播 | 空/纯空白 `title` 降级未开播（与方案「取值无效即降级」一致） | live-status 新增空标题用例 |
+| P2-2 `sectionCenter` 用 `offsetTop` 偏离方案 | 改为 `getBoundingClientRect().top + window.scrollY` | smooth-scroll 用例改 stub rect，吸附点断言回归 |
+| P2-3 缺少缓存共享集成用例 | 新增 `tests/live-status-integration.test.tsx` | 8 徽章 / 4 请求 / 状态一致 |
+
+### 返工记录（第二轮，2026-09-23，Review R1）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R1 面板结构改造后 `a.panelLink` 设 `z-index: 1`，`span.bar` 仍为 `z-index: auto` 被压到立绘图层之下（代表色指示条被遮挡，一期视觉回归） | 沿用一期「指示条恒在最上层」的视觉约定：`.bar` 提升 `z-index: 3`（高于 panelLink=1、meta=2；bar 位于面板底部 4px，与 meta 不重叠） | `hero-wall.test.tsx` 新增 CSS 结构断言：读取 `hero-wall.module.css`，`.bar` 规则须声明 `z-index` 且数值高于 `.panelLink`（先红后绿） |
+
+### 返工记录（第三轮，2026-09-23，Review R2）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R2/R1 修复副作用：`.bar` 提升 `z-index: 3` 后位于覆盖式锚点之上且未设 `pointer-events`，成为命中测试拦截层——面板底部 4px 条带点击既不激活锚点也无任何处理（点击死区），违反技术方案 §4.3「点面板任意处进介绍区」 | 采用建议 a：`.bar` 为纯装饰元素，增加 `pointer-events: none`，点击穿透到 `a.panelLink`；hover 灰化经 `.panel`/`.wall` 的 `:hover` 链不受影响（命中目标下移仍在面板内） | 扩展 `hero-wall.test.tsx` 既有「层叠结构」用例：`.bar` 规则须含 `pointer-events: none`（先红后绿） |
+
+### 返工记录（第四轮，2026-09-23，Review R3）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R3 徽章槽 `pointer-events: auto` 作用于槽内**全部状态**：未开播 `span.offline` 与加载骨架 `span.skeleton` 非链接，点击命中后被吞掉（`closest("a")` 为 null 放行、span 无默认行为），徽章盒成为面板内点击死区；未开播是常态，影响大于 R2 的 4px 条带。与 R2 同源（pointer-events 分层边界遗漏），违反技术方案 §4.3 | 采用建议 a 的语义化写法：`live-badge.module.css` 基础规则 `.badge` 设 `pointer-events: none`，仅交互态 `.living` 恢复 `pointer-events: auto`——「仅交互态接管点击」；开播徽章在 `.badgeSlot` 的 auto 之下依旧可点（AC-3 不变），非交互态穿透到下方 `a.panelLink`（首屏）/ section 背景（介绍区，无行为差异）。不与方案 b 叠加 | `live-badge.test.tsx` 新增 CSS 结构断言：`.badge` 须含 `pointer-events: none`、`.living` 须含 `pointer-events: auto`、`.skeleton`/`.offline` 不得回设 auto（先红后绿） |
+
+### 返工记录（第五轮，2026-09-23，Review R4）
+
+> **Review 更正**：第四轮「方案 a 与 b 效果等价」的判断**有误**——`pointer-events: none` 只让徽章**自身**退出命中测试，事件会落到该点位 paint 序更上层且可命中的盒子；本轮以无头 Chromium `document.elementFromPoint`（浏览器为点击事件选定目标的判定原语）实证：`.badgeSlot`（`pointer-events: auto`，位于 meta 的 z2 子树、整矩形覆盖徽章）恰好吞掉点击，故 a 单独使用无效。**只有让「徽章 → 锚点」整条命中链上除开播链接外全部 `none` 才成立。**
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R4（R3 修复无效）：拦截者从徽章 span 转移到包装 span `.badgeSlot`——`.badge(none)` 后点击命中 paint 序更上层的 `.badgeSlot(auto)`，`closest("a")` 仍为 null，徽章盒 ≈56×25px 死区依旧存在（真实构建 + A/B 复现页双组实证） | 采用指定最小修复：`hero-wall.module.css` 的 `.badgeSlot` 改 `pointer-events: none`（保留 `align-self: flex-start`）。开播徽章可点性由 `live-badge.module.css` 的 `.living{auto}` 显式保证（**祖先 `none` 不阻止子树显式 `auto` 成为命中目标**，B 组已实证），AC-3 与 T5「可交互徽章可点」意图不受影响；改后命中链 `.badge(none)/.badgeSlot(none)/.meta(none)` → 穿透到 `a.panelLink`（或其立绘子元素）。**`.badge`/`.living` 声明保留不动**（语义正确且必要），未叠加其他文件改动 | 扩展 `hero-wall.test.tsx`「层叠结构」用例：`.badgeSlot` 规则须含 `pointer-events: none` 且不得含 `pointer-events: auto`（既有 `.bar` 与 live-badge 四条断言保留） |
+
+**结构断言的诚实边界与一次性实证记录（已执行留档）**：`readFileSync` + 正则断言只约束声明、不验证命中路由（jsdom 不做命中测试）。真实路由以 `elementFromPoint` 人工验证，方法：无头 Chromium（Playwright 1.63 + chromium-1234）静态服务本仓库 `out/` 构建产物（viewport 1280×800，≥48em PC 断点），对徽章盒中心坐标取 `document.elementFromPoint(x, y)`，并配合真实 `page.mouse.click` 探针（document 冒泡监听，hydration 后注册以观察 smooth-scroll 的 `preventDefault`）。**2026-09-23 实测结果（13/13 通过）**：
+
+| 场景 | 取样点 | 命中目标 | 结论 |
+|------|--------|----------|------|
+| 状态 A 未开播（route abort 降级） | 徽章盒中心（56×18px，badge/slot/meta 的 computed `pointer-events` 均为 `none`） | `IMG.hero-wall-module__art`，`closest("a")` = `#member-viridis` | ✅ 死区消除，命中面板锚点子树 |
+| 状态 A + 真实鼠标点击同点位 | — | 探针：`anchor=#member-viridis`、`defaultPrevented=true`、点击后 `scrollY 0→794` 且 `location.hash=""` | ✅ 被 lenis 拦截并实际滚动到介绍区（非死区、非原生 hash 跳转） |
+| 状态 A | `.bar` 条带中心 / 成员名字中心 | 均 `closest("a")` = `#member-viridis` | ✅ R1/R2 复验通过 |
+| 状态 B 开播（route fulfill `live:true`） | 徽章盒中心（badge computed `pointer-events=auto`，slot=`none`） | `A.live-badge-module__…__living` 自身，`href=https://space.bilibili.com/1891335475` | ✅ AC-3 徽章链接仍为命中目标（祖先 `none` 不阻止子孙显式 `auto`） |
+
+复跑方法：`python3 -m http.server 8123 --directory out` + `/tmp/opencode/verify-hit.cjs`（Playwright 脚本，含状态 A/B 双路由与点击探针）。
+
+### 返工记录（第六轮，2026-09-23，Review R5-1 / R5-2）
+
+> 需求 v1.1 / 技术方案 §3.3 / 实现计划 T4 已由审核节点先行修订（a89fb48，文档先行），本轮按修订后文档实现，不改需求语义。
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R5-1 开播徽章 `.living` 硬编码全站统一红（`--mantine-color-red-6`），四位成员徽章外观完全相同，违背一期「每位成员代表色」视觉体系（`.bar`、`.cta` 均已随成员变色） | `.living` 主色改 `background-color: var(--member-accent)`（由 hero-wall 面板 div 与 member-section section 内联提供，作用域已核实，无需改数据层/传参）；文字改用深色 `--mantine-color-night287-9`——四色板 `-6` 阶（绿 `#8eb056` / 红 `#ff2231` / 浅绿 `#d4da7b` / 浅紫 `#b4a6bf`）上深色文字对比度均可读（白字在浅色板上不达标）；`.badge{none}`/`.living{auto}` 指针事件声明原样保留 | TDD 第 6 条：读取 `live-badge.module.css`，`.living` 背景须为 `var(--member-accent)`、无十六进制色值、背景不得取 `--mantine-color-*` 固定色板 |
+| R5-2 开播可见文本为裸标题，未以「正在直播」开头 | 开播态渲染「正在直播：{标题}」（全角冒号，与既有 `aria-label` 口径一致）；`text-overflow: ellipsis` 截尾天然保证前缀完整可见 | TDD 第 5 条：可见文本 `startsWith("正在直播：")` 且含标题；既有开播用例文本断言同步更新 |
+| 防护边界 | R1–R4 命中链结构断言（`.badge`/`.badgeSlot`/`.living`/`.bar` 的 pointer-events 链）零改动 | 既有断言保持绿色 |
+| R5-2 附带暴露（实证发现）：`.badgeSlot` 的 `align-self: flex-start` 使槽宽 = nowrap 的 `min-content`（实测 464px > 面板 320px），`.badge { max-width: 100% }` 失去确定基准——**ellipsis 从未生效**，长标题被 `panel overflow:hidden` 在边缘硬裁、徽章几何盒越界到相邻面板（评审脚本网格采样 12/15），「ellipsis 截尾天然满足」的机制实际不成立 | **必要的最小越界修正（已透明记录）**：`hero-wall.module.css` 的 `.badgeSlot` 移除 `align-self: flex-start`，恢复 stretch → 槽宽 = meta 内容宽（确定值）→ `.badge max-width:100%` 有基准 → 单行 `nowrap` + `text-overflow: ellipsis` 真正截尾、前缀完整可见、徽章盒收敛在面板内。**仅删 1 行布局声明，`pointer-events: none` 命中链声明与断言零改动**（评审限定范围外的唯一改动，为满足 R5-2 既定截断机制的必要项） | `hero-wall.test.tsx` 新增结构断言：`.badgeSlot` 不得设 `align-self: flex-start`（先红后绿） |
+| R5-2 二次附带暴露（实证发现）：`border-radius: 4px` + `overflow: hidden`（`text-overflow` 必需）组合使 Chromium 对**命中区域**施加圆角裁切——徽章右下内角 (right−1, bottom−1) 处 (1,1) 偏移点落在半径 4px 弧外（√2·3≈4.24>4），点击穿透到面板，评审脚本网格 14/15（消融实验实证：`borderRadius=0` 或 `overflow=visible` 均可恢复命中；半径扫描 0/1/2px→15/15、3/4px→14/15） | `.badge` 圆角降级 `--mantine-radius-sm`（4px）→ **`--mantine-radius-xs`（2px）**：网格 15/15 全命中（实测），保留细微圆角视觉；不改 `overflow: hidden`/`text-overflow`（ellipsis 是 R5-2 的既定截断机制）、不动命中链 pointer-events | `live-badge.test.tsx` 新增结构断言：`.badge` 规则 `border-radius` 须为 `--mantine-radius-xs`（先红后绿） |
+
+**第六轮复验留档（2026-09-24，无头 Chromium 对本仓库 `out/` 构建产物，13+14+21 项全部通过）**：
+- `verify-hit.cjs`：**13/13**——未开播徽章盒中心/`.bar`/名字命中面板锚点、真实点击 `defaultPrevented=true` 且 `scrollY 0→794`、开播态命中徽章外链自身；
+- `review-r5-verify.cjs`（评审留档脚本，独立实现）：**14/14**——四面板 5×3 网格各 15/15 命中面板锚点、真实点击路由+拦截+落位、加载骨架态 15/15、**开播徽章盒 15/15 命中外链自身**、介绍区徽章 3/3；
+- `verify-r5.cjs`：**21/21**——四位成员开播主色分别 `rgb(142,176,86)/rgb(255,34,49)/rgb(212,218,123)/rgb(180,166,191)`（调色盘 -6 阶逐值匹配、互不相同）、文字深色可读、可见文本以「正在直播：」开头、长标题 `truncated=true` 且前缀四字像素框完整在盒内。
+- 单测/静态检查：`pnpm test` 11 files / **64 tests** 全绿，`pnpm lint`、`pnpm build` 全绿。
+
+### 返工记录（第七轮，2026-09-24，Review R6-1 / R6-2，注释勘误 · 零行为改动）
+
+| 问题 | 处置 | 验证 |
+|------|------|------|
+| R6-1 `hero-wall.tsx` 徽章槽注释仍写「恢复指针事件」——与 R4 修复（`.badgeSlot` 已为 `none`）矛盾，直指把槽改回 auto 的回归陷阱 | 注释改为如实描述：徽章槽不接管命中（R4），与 meta 一起点击穿透到覆盖式锚点；开播徽章由 `.living` 显式 auto 接管 | 仅注释文字；`pnpm test` / `pnpm lint` 复跑全绿，无断言涉及注释 |
+| R6-2 `live-badge.module.css` 头注释「徽章槽（auto）…死区（R3）」自 R4 起失效且归属不全 | 「（auto）」→「（none）」；归属 R3 → R3/R4 | 同上，样式声明零改动 |
+| 顺带：`live-badge.tsx` 类注释「开播显示直播标题」过时于 R5-2 | 改为「开播显示『正在直播：{标题}』（可点击）」 | 同上，JSX 零改动 |
+| 范围纪律：非阻塞备注（未开播 `aria-label` 属 JSX 行为改动）**未动**，遵循本轮「JSX/样式/测试一律零改动」的更严格口径 | — | — |

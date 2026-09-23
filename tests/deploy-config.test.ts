@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { NextConfig } from "next";
 
 const root = process.cwd();
@@ -97,5 +97,26 @@ describe("部署配置一致性 deploy-config", () => {
     const config = mod.default;
     expect(config.output).toBe("export");
     expect(config.images?.unoptimized).toBe(true);
+  });
+
+  it("next.config.ts 提供仅开发态生效的 /api/live/* 代理 rewrites（构建期为空数组，静态导出不受影响）", async () => {
+    const mod = (await import("../next.config")) as { default: NextConfig };
+    const config = mod.default;
+    expect(typeof config.rewrites).toBe("function");
+
+    const rewrites = config.rewrites as () => Promise<unknown[]>;
+    vi.stubEnv("NODE_ENV", "development");
+    const devRules = await rewrites();
+    vi.stubEnv("NODE_ENV", "production");
+    const buildRules = await rewrites();
+    vi.unstubAllEnvs();
+
+    expect(devRules).toEqual([
+      {
+        source: "/api/live/:path*",
+        destination: "https://api.sumire.live/api/live/:path*",
+      },
+    ]);
+    expect(buildRules).toEqual([]);
   });
 });

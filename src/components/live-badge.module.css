@@ -1,0 +1,46 @@
+/* 直播状态徽章：固定高度三态（骨架 / 开播 / 未开播），沿用 Mantine 主题 token
+   指针事件分层：默认关闭，仅交互态（开播链接）接管点击——
+   非交互态在首屏徽章槽（none）之下点击穿透到面板锚点，不产生点击死区（R3/R4） */
+.badge {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 1.5em;
+  padding: 0 var(--mantine-spacing-xs);
+  /* 圆角须 ≤2px：radius(>2px) + overflow:hidden（ellipsis 必需）会被 Chromium
+     施加圆角命中裁切，右下内角点击穿透到面板（实测 sm=4px→网格14/15，xs=2px→15/15） */
+  border-radius: var(--mantine-radius-xs);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  line-height: 1.5;
+  pointer-events: none;
+}
+
+/* 加载中：占位骨架，高度与徽章一致避免布局跳动 */
+.skeleton {
+  width: 4em;
+  background-color: var(--mantine-color-night287-7);
+}
+
+/* 开播：主色跟随成员代表色（--member-accent 由 HeroWall 面板 / MemberSection
+   容器内联提供，四位成员各呈自己的调色盘 -6 阶），深色文字保证四色板上均可读；
+   状态不依赖颜色单独传达（可见文本以「正在直播」开头 + aria-label）；
+   唯一接管点击的状态，AC-3 徽章跳转 */
+.living {
+  background-color: var(--member-accent);
+  color: var(--mantine-color-night287-9);
+  pointer-events: auto;
+}
+
+/* 未开播：低强调文本，非链接、不可点击 */
+.offline {
+  background-color: color-mix(in srgb, var(--mantine-color-night287-8) 70%, transparent);
+  color: var(--mantine-color-night287-3);
+}
+
+/* 直播标题过长时单行截断 */
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
