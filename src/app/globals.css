@@ -1,0 +1,36 @@
+:root {
+  --site-header-height: 60px;
+}
+
+html {
+  height: 100%;
+  color-scheme: dark;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  /* 页面底色 287-9、主文字 287-0（设计文档 §1.1） */
+  color: var(--mantine-color-night287-0);
+  background: var(--mantine-color-night287-9);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}

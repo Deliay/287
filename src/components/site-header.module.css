@@ -1,0 +1,70 @@
+.header {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 100;
+  height: var(--site-header-height);
+  background: color-mix(in srgb, var(--mantine-color-night287-8) 85%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--mantine-color-night287-7);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-inline: var(--mantine-spacing-md);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--mantine-color-night287-0);
+}
+
+.nav {
+  display: none;
+  margin-left: auto;
+  gap: var(--mantine-spacing-lg);
+}
+
+.burger {
+  display: block;
+  margin-left: auto;
+}
+
+.link {
+  color: var(--mantine-color-night287-1);
+  transition: color 200ms ease-out;
+}
+
+.link:hover {
+  color: var(--mantine-color-night287-0);
+}
+
+.drawerNav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+  padding: var(--mantine-spacing-md);
+}
+
+.drawerLink {
+  color: var(--mantine-color-night287-1);
+  font-size: var(--mantine-font-size-lg);
+  transition: color 200ms ease-out;
+}
+
+.drawerLink:hover {
+  color: var(--mantine-color-night287-0);
+}
+
+@media (min-width: $mantine-breakpoint-sm) {
+  .nav {
+    display: flex;
+  }
+
+  .burger {
+    display: none;
+  }
+}
