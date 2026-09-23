@@ -81,6 +81,17 @@ describe("部署配置一致性 deploy-config", () => {
     expect(Object.keys(pkg.devDependencies ?? {})).toContain("wrangler");
   });
 
+  it("不提供与静态导出不兼容的 start 脚本（next start 不支持 output: export）", () => {
+    const pkg = JSON.parse(readRootFile("package.json")) as {
+      scripts?: Record<string, string>;
+    };
+    const start = pkg.scripts?.start;
+    expect(
+      start === undefined || !start.includes("next start"),
+      "start 脚本不得调用 next start（output: export 下必然报错）",
+    ).toBe(true);
+  });
+
   it("next.config.ts 默认导出为静态导出配置（output: export + images.unoptimized）", async () => {
     const mod = (await import("../next.config")) as { default: NextConfig };
     const config = mod.default;

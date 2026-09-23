@@ -114,14 +114,22 @@ T0（红：测试先行）→ T1（next.config）→ T2（wrangler.toml）→ T3
 | 3. 页面/图片无 404 | ✅ 通过 | `out/` 含 `index.html`、5 个 svg、4 个 `images/members/*.avif`；线上逐一请求首页/4 张立绘/5 个 svg/favicon/JS/CSS 共 22 项资源全部 200（后续重复 curl 返回 403 为 Cloudflare 反机器人挑战页，非资源缺失，浏览器访问不受影响） |
 | 4. 预览脚本可用 | ✅ 通过 | `pnpm run preview` → `wrangler dev` Ready on http://localhost:8787，`/` 与 `/images/members/viridis.avif` 均 200 |
 | 5. 配置入库且无密钥 | ✅ 通过 | `wrangler.toml` 仅 `name` / `compatibility_date` / `assets.directory`，T0 用例 1 白名单 + 敏感字段名断言通过；`.wrangler/` 本地状态已加入 `.gitignore` |
-| 6. 现有流程不破坏 | ✅ 通过 | `pnpm test` 30/30、`pnpm run lint` 无告警、`pnpm run dev` 首页 200、`pnpm run build` 成功产出 `out/` |
-| 7. 新增部署配置测试 | ✅ 通过 | `tests/deploy-config.test.ts` 4 个用例全绿（先红后绿，红阶段 4 例均因预期原因失败） |
+| 6. 现有流程不破坏 | ✅ 通过 | `pnpm test` 30/30、`pnpm run lint` 无告警、`pnpm run dev` 首页 200、`pnpm run build` 成功产出 `out/`；返工后 `pnpm run start` 不再保留必然报错的入口（见返工修订记录 P1） |
+| 7. 新增部署配置测试 | ✅ 通过 | `tests/deploy-config.test.ts` 用例全绿（先红后绿；返工新增用例 5：禁止 `next start` 脚本） |
 
 **实施偏差记录**（相对本计划的最小偏差）：
 
 1. `pnpm-workspace.yaml` 的 `allowBuilds` 新增 `esbuild: true`、`workerd: true`：wrangler 依赖的这两个包需要执行 postinstall 下载二进制，否则 pnpm 报 `ERR_PNPM_IGNORED_BUILDS` 并使 `pnpm exec wrangler` 触发的依赖状态检查失败（验收标准 1 的必要条件）。
 2. `.gitignore` 新增 `.wrangler/`：`wrangler dev` 会在仓库根目录生成本地 miniflare 状态目录，不属于部署配置，不应入库（验收标准 5 的必要条件）。
 3. 未增加 `build:cf` 别名（技术方案标注可选），保持最小变更。
+
+**返工修订记录（2026-09-23 · 针对代码审核打回）**：
+
+- **P1（阻塞）`start` 脚本与 `output: 'export'` 不兼容**：`pnpm run build && pnpm run start` 必然失败（`Error: "next start" does not work with "output: export" configuration.`，exit 1）。
+  - **采纳方案：(a) 删除 `start` 脚本**。理由：静态导出产物不再具备可被 `next start` 承载的服务端，本地运行由 `pnpm run dev`（开发）与 `pnpm run preview`（wrangler dev，产物预览）覆盖，发布由 `pnpm run deploy` 承担；相较方案 (b)（引入 `serve` 等静态服务器依赖）不新增依赖，符合技术方案「保持最小变更」原则（与不加 `build:cf` 同源）。
+  - **测试计划**：`tests/deploy-config.test.ts` 新增用例 5（红）——断言 `package.json` 不得存在调用 `next start` 的 `start` 脚本；删除脚本后转绿（与 T0 用例同批，遵循红-绿流程）。
+  - 涉及文件：`package.json`、`tests/deploy-config.test.ts`。
+- **S1（非阻塞建议）README 部署章节**：采纳——将 `README.md` 的「Deploy on Vercel」章节替换为本项目实际的 Cloudflare 部署/预览用法（`pnpm run preview` / `pnpm run deploy`），避免文档指向与本期能力不符的平台；不改变任何代码行为。
 
 ## 4. 评审记录
 
