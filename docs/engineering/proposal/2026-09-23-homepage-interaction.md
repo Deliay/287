@@ -92,7 +92,7 @@ export function fetchLiveStatus(memberId: Member["id"]): Promise<LiveStatus>;
 - 请求失败（网络错误、非 2xx、超时 ~5s `AbortSignal.timeout`）同样降级为未开播态。
 - **请求地址分环境**：`members.ts` 中 `liveStatusUrl` 记录接口的**路径部分**（如 `/api/live/viridis/status`）；`live-status.ts` 拼接 base——生产环境直连 `https://api.sumire.live`（287.live 已在 CORS 白名单），开发环境走相对路径，由 `next dev` 的本地代理转发（`next.config.ts` 中开发态 `rewrites`：`/api/live/:path*` → `https://api.sumire.live/api/live/:path*`），本地开发无跨域问题。
 
-**LiveBadge 组件**：三态渲染——加载中（骨架/占位，避免布局跳动）、开播（直播标题，截断溢出）、未开播（「未开播」）。点击行为：开播时跳转直播入口（T1 未确认前默认 `member.bilibili` 主页，新标签页）；未开播时不可点击（渲染为非链接元素）。
+**LiveBadge 组件**：三态渲染——加载中（骨架/占位，避免布局跳动）、开播（可见文本以「正在直播」开头、后接直播标题，超长截断溢出且「正在直播」前缀保持完整可见）、未开播（「未开播」）。**配色跟随成员代表色（调色盘）**：开播态主色取 `var(--member-accent)`（HeroWall 面板 / MemberSection 容器已内联提供，`member.colorKey` 映射 Mantine 色板），不得使用全站统一固定色；文字与背景保持足够对比度，状态不依赖纯颜色传达（需求 §5 可访问性）。点击行为：开播时跳转直播入口（T1 未确认前默认 `member.bilibili` 主页，新标签页）；未开播时不可点击（渲染为非链接元素）。
 
 **逐屏吸附滚动**：`smooth-scroll.tsx` 中 lenis 初始化时配置 snap 点（各介绍区中心偏移量，mount 后由 DOM `getBoundingClientRect` 计算并在 resize 时重算）。移动端（< 48em）一期本就不启用 lenis，吸附改用 CSS `scroll-snap-type: y proximity`（proximity 而非 mandatory，避免触屏滚动被强制劫持，对应 AC-7）。**仅当 lenis snap 不可用时**，PC 端也降级为 CSS scroll-snap。
 

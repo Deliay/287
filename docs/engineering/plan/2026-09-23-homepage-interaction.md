@@ -63,14 +63,16 @@
 - 文件：`src/components/live-badge.tsx` + `live-badge.module.css`（新增）、`tests/live-badge.test.tsx`（新增）
 - 内容：Client Component，props `{ member: Member }`，内部 `useLiveStatus`。三态渲染：
   - 加载中：占位骨架（固定高度，避免布局跳动）；
-  - 开播：显示直播标题（CSS `text-overflow: ellipsis` 截断），整体渲染为 `<a href={member.liveUrl ?? member.bilibili} target="_blank" rel="noopener noreferrer">`（T1 未确认前默认 B 站主页）；
+  - 开播：可见文本以「正在直播」开头、后接直播标题（CSS `text-overflow: ellipsis` 截断，「正在直播」前缀不被截掉），整体渲染为 `<a href={member.liveUrl ?? member.bilibili} target="_blank" rel="noopener noreferrer">`（T1 未确认前默认 B 站主页）；配色跟随成员代表色——开播态主色取容器内联的 `var(--member-accent)`，不得硬编码全站统一色（2026-09-23 下游验收返工）；
   - 未开播：纯文本「未开播」，**非链接**、不可点击。
   - 可访问性：徽章带可读文本与 `aria-label`（如「Viridis 正在直播：{title}」/「Viridis 未开播」），不依赖颜色传达状态。
 - TDD（`vi.mock` `@/lib/live-status` 的 `useLiveStatus` 返回三种状态）：
   1. 加载中渲染占位、无链接；
   2. 开播渲染标题文本且为链接、`href` 为成员 B 站主页、新标签页（AC-2/AC-3）；
   3. 未开播渲染「未开播」且非链接（`queryByRole("link")` 为 null）；
-  4. 标题过长时挂载截断 class（结构断言）。
+  4. 标题过长时挂载截断 class（结构断言）；
+  5.（2026-09-23 下游验收返工）开播态可见文本以「正在直播」开头且包含直播标题（前缀完整可见）；
+  6.（2026-09-23 下游验收返工）开播态样式使用 `var(--member-accent)` 成员代表色（结构断言：`.living` 规则引用 `--member-accent`，不硬编码固定色板值）。
 - 依赖：T3。
 
 ### T5 HeroWall 锚点跳转改造 + 首屏徽章（src/components/hero-wall.tsx）
@@ -145,7 +147,7 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 需求验收 | 覆盖任务 | 验证方式 |
 |----------|----------|----------|
 | AC-1 站内锚点跳转 | T5、T6、T7 | hero-wall 用例断言 `#member-{id}` 无 `_blank`；member-section 用例断言 `id`；T6 用例断言 lenis.scrollTo 拦截；T9 人工点验 |
-| AC-2 首屏徽章三态 | T4、T5 | live-badge 用例（mock 开播/未开播）+ hero-wall 桩断言 |
+| AC-2 首屏徽章三态（开播文案「正在直播」前缀 + 成员代表色配色） | T4、T5 | live-badge 用例（mock 开播/未开播，断言前缀文案与 `.living` 引用 `--member-accent`）+ hero-wall 桩断言 |
 | AC-3 徽章点击跳转 | T4 | live-badge 用例：开播为链接（默认 B 站主页，待 T1 确认后改 `liveUrl`）、未开播非链接 |
 | AC-4 失败降级 | T3 | live-status 用例：reject/非 2xx/畸形 JSON 均 resolve 未开播且不抛 |
 | AC-5 一致性与单次请求 | T3、T5、T7 | live-status 用例：同 memberId 只 fetch 一次；两处共用 `useLiveStatus` 天然同源 |
