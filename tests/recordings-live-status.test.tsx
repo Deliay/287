@@ -99,9 +99,9 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     expect(screen.getAllByText("直播中")).toHaveLength(2);
     expect(screen.getAllByText("未开播")).toHaveLength(2);
     expect(screen.getByText("好空灵啊")).toBeInTheDocument();
-    // 未开播卡片不显示直播标题
-    expect(screen.getByTestId("live-card-komichi").querySelector("h3, p")).toBeTruthy();
+    // 未开播卡片不显示他人直播标题（成员名 h3 始终存在，故断言整卡文本）
     expect(screen.getByTestId("live-card-komichi").textContent).not.toContain("重生之我是钓鱼大师");
+    expect(screen.getByTestId("live-card-komichi").textContent).not.toContain("好空灵啊");
     expect(screen.getAllByText(/^更新于/)).toHaveLength(4);
   });
 
@@ -182,7 +182,8 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     ).toHaveTextContent("听直播");
   });
 
-  it("接口失败显示错误文案与重试，不白屏；重试成功后恢复卡片", async () => {    const fetchMock = vi
+  it("接口失败显示错误文案与重试，不白屏；重试成功后恢复卡片", async () => {
+    const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("boom", { status: 500 }))
       .mockResolvedValue(jsonResponse(statusSample));

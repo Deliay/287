@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { fetchLiveEvents } from "../api";
 import type { LiveEvent } from "../types";
-import { WINDOW_MS, toIso, windowBounds, windowIndexFor } from "./replay-windows";
+import { WINDOW_MS, offsetMsFor, toIso, windowBounds, windowIndexFor } from "./replay-windows";
 
 /** 单页条数（上游契约上限 100）。 */
 export const WINDOW_PAGE_SIZE = 100;
@@ -226,7 +226,7 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
     const toMs = (index + 2) * WINDOW_MS;
     const result: LiveEvent[] = [];
     for (const event of events) {
-      const offset = Date.parse(event.occurredAt) - (startMs ?? 0);
+      const offset = offsetMsFor(event.occurredAt, startMs ?? 0);
       if (offset >= fromMs && offset < toMs) result.push(event);
     }
     return result;

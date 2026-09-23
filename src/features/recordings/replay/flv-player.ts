@@ -207,8 +207,3 @@ export function configureBufferForBitrate(fileSize: number, durationSeconds: num
     return false;
   }
 }
-
-/** 当前是否有回放实例持有该地址（供组件判断播放归属）。 */
-export function isReplayOwner(url: string): boolean {
-  return currentUrl === url && currentPlayer !== null;
-}

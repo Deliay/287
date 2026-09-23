@@ -9,6 +9,7 @@ import type { LiveEvent, RecordingFile } from "@/features/recordings/types";
 import { setMpegtsLoader, type MpegtsLike } from "@/features/recordings/replay/flv-player";
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
+import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
 import { renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
@@ -32,7 +33,7 @@ const file: RecordingFile = {
   },
 };
 
-const bounds = { startMs: START_MS, endMs: START_MS + 3 * 3600 * 1000, fallback: false };
+const bounds = { startMs: START_MS, endMs: START_MS + 3 * 3600 * 1000 };
 
 function makeEvent(id: string, offsetSeconds: number, content = id): LiveEvent {
   return {
@@ -220,19 +221,22 @@ describe("回放舞台 ReplayStage（T13 / AC-5、AC-6、AC-7）", () => {
     expect(screen.queryByRole("group", { name: "播放控件" })).not.toBeInTheDocument();
   });
 
-  it("页面卸载 → flv-player 销毁（不进悬浮组件，FR-6 边界）", async () => {
+  it("页面卸载 → flv-player 销毁，且回放不进入悬浮音频注册表（FR-6 边界）", async () => {
     const deps = makeDeps();
     const { unmount } = render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
     await waitFor(() => expect(deps.startReplay).toHaveBeenCalledTimes(1));
     const startArgs = (deps.startReplay as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
       url: string;
-      isLive?: boolean;
     };
     expect(startArgs.url).toContain("/recordings/");
+    // 回放只在页面内起播：不得占用「听直播」多路注册表（FR-6 悬浮组件仅承载听直播）
+    expect(audioRegistry.getLanesSnapshot()).toHaveLength(0);
 
     unmount();
     expect(deps.destroyReplay).toHaveBeenCalledTimes(1);
     expect(deps.destroyReplay).toHaveBeenCalledWith(startArgs.url);
+    expect(audioRegistry.getLanesSnapshot()).toHaveLength(0);
+    expect(screen.queryByTestId("floating-audio-player")).not.toBeInTheDocument();
   });
 
   it("seek 失败展示错误与重试（不白屏）", async () => {
@@ -554,6 +558,45 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     });
     fireEvent.mouseMove(column);
     expect(group).toHaveAttribute("data-controls", "visible");
+  });
+});
+
+describe("R8 收尾：需求字面行为断言补全", () => {
+  it("FR-5 事件列表展示 SC / 礼物 / 舰长类型徽标（entryLabel，设计 §2.5）", async () => {
+    const events: LiveEvent[] = [
+      {
+        eventId: "sc-1",
+        type: "super_chat",
+        occurredAt: new Date(START_MS + 10_000).toISOString(),
+        sender: { uid: 1, name: "打赏者", face: "", medal: null, guardLevel: null },
+        content: "加油",
+      },
+      {
+        eventId: "gift-1",
+        type: "gift",
+        occurredAt: new Date(START_MS + 20_000).toISOString(),
+        sender: { uid: 2, name: "送礼者", face: "", medal: null, guardLevel: null },
+        content: "小花花",
+      },
+      {
+        eventId: "guard-1",
+        type: "guard_buy",
+        occurredAt: new Date(START_MS + 30_000).toISOString(),
+        sender: { uid: 3, name: "上舰者", face: "", medal: null, guardLevel: null },
+        content: "开通舰长",
+      },
+    ];
+    const deps = makeDeps({ fetchEvents: () => Promise.resolve({ total: 3, items: events }) });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /SC 打赏者/ })).toBeInTheDocument());
+    const list = screen.getByTestId("event-list");
+    expect(within(list).getByRole("button", { name: /礼物 送礼者/ })).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: /舰长 上舰者/ })).toBeInTheDocument();
+    // 类型徽标为条目文本前缀，可被读屏/正则命中
+    expect(list.textContent).toContain("SC 打赏者：加油");
+    expect(list.textContent).toContain("礼物 送礼者：小花花");
+    expect(list.textContent).toContain("舰长 上舰者：开通舰长");
   });
 });
 

@@ -248,7 +248,7 @@ export class AudioPlayerRegistry {
  * 默认播放器工厂：动态加载 mpegts.js（补丁版）拉起 FLV 直播流。
  * `MEDIA_INFO` 视为就绪（进入 playing），`ERROR` 视为本路失败。
  */
-export const defaultLivePlayerFactory: LivePlayerFactory = async ({ url, media, volume, onReady, onError }) => {
+const defaultLivePlayerFactory: LivePlayerFactory = async ({ url, media, volume, onReady, onError }) => {
   const mpegts = (await import("mpegts.js")).default;
   media.volume = volume;
   const player = mpegts.createPlayer({ type: "flv", isLive: true, url });

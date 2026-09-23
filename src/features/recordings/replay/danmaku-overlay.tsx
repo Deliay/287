@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { LiveEvent } from "../types";
+import { offsetMsFor } from "./replay-windows";
 
 /** 播放头回退或前跳超过该阈值（秒）判为 seek，清空浮层重建。 */
 export const SEEK_JUMP_THRESHOLD_SECONDS = 2;
@@ -94,7 +95,7 @@ export function danmakuOffsets(
   const result: { event: LiveEvent; offsetSeconds: number }[] = [];
   for (const event of events) {
     if (event.type !== "danmaku") continue;
-    const offset = Date.parse(event.occurredAt) - recordStartMs;
+    const offset = offsetMsFor(event.occurredAt, recordStartMs);
     if (!Number.isFinite(offset)) continue;
     result.push({ event, offsetSeconds: offset / 1000 });
   }

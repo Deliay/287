@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   KEYFRAME_SCAN_SECONDS,
+  SEEK_TIMEOUT_MESSAGE,
   MAX_KEYFRAME_SCAN_BYTES,
   MAX_WINDOW_READ_BYTES,
   SEEK_WATCHDOG_MS,
@@ -295,12 +296,13 @@ describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T1
     expect(onFailed.mock.calls[0][0]).toContain("seek");
   });
 
-  it("seek 后 15s 未恢复播放 → 看门狗超时显性报错", async () => {    vi.useFakeTimers();
+  it("seek 后 15s 未恢复播放 → 看门狗超时显性报错", async () => {
+    vi.useFakeTimers();
     const window = concat(new Uint8Array([0, 0, 0]), buildTag(9, 30, 60_000, 0x10));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(windowResponse(window)));
     const onFailed = vi.fn();
 
-    const watchdog = new SeekWatchdog(() => onFailed("seek 超时：15 秒内未恢复播放"));
+    const watchdog = new SeekWatchdog(() => onFailed(SEEK_TIMEOUT_MESSAGE));
     const ok = await performSeek({
       video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
       url: "https://rec.example.com/a.flv",
@@ -324,6 +326,30 @@ describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T1
     watchdog.disarm();
     vi.advanceTimersByTime(SEEK_WATCHDOG_MS * 2);
     expect(onFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("未注入自定义 watchdog 时，performSeek 默认看门狗使用生产中性超时文案（审核 R8-c）", async () => {
+    vi.useFakeTimers();
+    const window = concat(new Uint8Array([0, 0, 0]), buildTag(9, 30, 60_000, 0x10));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(windowResponse(window)));
+    const onFailed = vi.fn();
+
+    // 不传 watchdog → 走 seek.ts 生产默认看门狗
+    const ok = await performSeek({
+      video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 90,
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: vi.fn(),
+      onFailed,
+    });
+    expect(ok).toBe(true);
+
+    vi.advanceTimersByTime(SEEK_WATCHDOG_MS);
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onFailed.mock.calls[0][0]).toBe(SEEK_TIMEOUT_MESSAGE);
+    expect(onFailed.mock.calls[0][0]).not.toContain("未恢复播放"); // 旧文案不得回归
   });
 
   it("次要5 失败文案区分原因：网络失败 ≠ 未支持 Range", async () => {

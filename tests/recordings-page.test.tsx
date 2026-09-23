@@ -20,7 +20,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("录播页组装（T8 / AC-2、AC-4、AC-9 部分）", () => {
+describe("录播页组装（T8 / AC-2、AC-4）", () => {
   it("渲染「当前直播」「历史录播」两区块，首拉仅请求 recording-status 一个接口", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

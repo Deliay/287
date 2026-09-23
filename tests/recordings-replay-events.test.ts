@@ -187,7 +187,8 @@ describe("弹幕窗口增量加载 replay-events（T10 / AC-7）", () => {
     store.dispose();
   });
 
-  it("请求失败置 error 并可 retry 重拉", async () => {    let fail = true;
+  it("请求失败置 error 并可 retry 重拉", async () => {
+    let fail = true;
     const { calls, fetchEvents } = captureFetch(() => {
       if (fail) return new Response("boom", { status: 500 });
       return jsonResponse({ total: 0, page: 1, pageSize: 100, items: [] });

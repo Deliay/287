@@ -70,11 +70,16 @@ describe("悬浮播放组件 FloatingAudioPlayer（T4 / AC-8）", () => {
     expect(screen.getByText("播放中")).toBeInTheDocument();
     expect(screen.getByText("加载中…")).toBeInTheDocument();
 
+    // FR-6：点击成员名跳回 /recordings（在该路停止前断言）
+    expect(screen.getByRole("link", { name: "小松绿" })).toHaveAttribute("href", "/recordings");
+
     fireEvent.click(screen.getAllByRole("button", { name: /停止小松绿/ })[0] as HTMLElement);
     expect(audioRegistry.getLanesSnapshot().map((lane) => lane.roomId)).toEqual([102]);
 
     fireEvent.click(screen.getByRole("button", { name: "全部停止" }));
     expect(audioRegistry.getLanesSnapshot()).toHaveLength(0);
+    // 技术方案 §6 AC-8：全部停止后组件从 DOM 消失
+    expect(screen.queryByTestId("floating-audio-player")).not.toBeInTheDocument();
   });
 
   it("收起/展开切换不改变注册表状态（播放不受影响）", () => {

@@ -342,6 +342,9 @@ export function isTimeBuffered(video: BufferedLike, time: number): boolean {
   return false;
 }
 
+/** seek 超时的生产文案（中性表述，播放/暂停两种状态均成立，审核 R7-b/R8-c）。 */
+export const SEEK_TIMEOUT_MESSAGE = "seek 超时：未能在 15 秒内完成跳转";
+
 /** seek 看门狗：arm 后超时未 disarm 则触发超时回调（显性报错，禁止静默冻结）。
  *
  * 生命周期语义（审核 R5-1）：`disarm()` 是**终局解除**——之后 `arm()` 一律为空操作，
@@ -455,7 +458,7 @@ export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
     return false;
   }
 
-  const watchdog = args.watchdog ?? new SeekWatchdog(() => onFailed("seek 超时：未能在 15 秒内完成跳转"));
+  const watchdog = args.watchdog ?? new SeekWatchdog(() => onFailed(SEEK_TIMEOUT_MESSAGE));
   watchdog.arm();
   return true;
 }

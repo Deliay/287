@@ -19,8 +19,9 @@ import {
   DanmakuOverlay,
 } from "./danmaku-overlay";
 import { useReplayEvents, type FetchEvents } from "./replay-events";
-import { segmentBoundsForFile, windowIndexFor, type SegmentBounds } from "./replay-windows";
+import { segmentBoundsForFile, windowIndexFor, type SegmentBounds, offsetMsFor } from "./replay-windows";
 import {
+  SEEK_TIMEOUT_MESSAGE,
   SeekWatchdog,
   performSeek as defaultPerformSeek,
   type PerformSeekArgs,
@@ -194,7 +195,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     if (!Number.isFinite(recordStartMs)) return [];
     const mapped: TimelineEntry[] = [];
     for (const event of windowedEvents) {
-      const offset = Date.parse(event.occurredAt) - recordStartMs;
+      const offset = offsetMsFor(event.occurredAt, recordStartMs);
       if (!Number.isFinite(offset)) continue;
       mapped.push({
         eventId: event.eventId,
@@ -265,13 +266,9 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   }, [playing, controlsActivity]);
 
   /**
-   * 真实恢复落位：解除看门狗并收敛 seek 中态。
-   * 三条信号（目标邻域 / 采样跳变 / seeked）必须同时满足：代次属于本次 seek、
-   * 且 performSeek 已生效（`applied`）——飞行期一律不消费（审核 R5-a/b）。
-   */
-  /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
    * 解除看门狗、收敛中态，并清除错误浮层（迟到的真实落位不得残留「seek 超时」，R7-a）。
+   * 由 `tryLand()` 在**任一**归属证据成立时调用（证据为并列关系，见其注释；审核 R8-a）。
    */
   const convergeLanding = useCallback(() => {
     watchdogRef.current?.disarm();
@@ -427,7 +424,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         controller.abort();
         abortedTokenRef.current = token;
         setSeeking(false);
-        setSeekError("seek 超时：未能在 15 秒内完成跳转"); // 中性文案：播放/暂停两种状态下均成立（审核 R7-b）
+        setSeekError(SEEK_TIMEOUT_MESSAGE); // 中性文案（生产常量）：播放/暂停两种状态下均成立（审核 R7-b）
       });
       // 登记进 watchdogRef 并**发起即武装**：覆盖网络扫描全阶段，
       // Range 请求挂起也能在 15s 内显性超时（审核 R5-c）；任何结束路径 disarm 为终局（审核 R5-1）

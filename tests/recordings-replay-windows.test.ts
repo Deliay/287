@@ -69,7 +69,6 @@ describe("时间锚点与分段推导 replay-windows（T9 / AC-7 对齐基准）
     const bounds = segmentBoundsForFile(files, "raw.flv");
     expect(bounds.startMs).toBe(Date.parse("2026-09-23T22:00:00.000Z"));
     expect(Number.isNaN(bounds.endMs)).toBe(true);
-    expect(bounds.fallback).toBe(true);
   });
 
   it("windowIndexFor 边界值：0 / 599999 / 600000；负值与 NaN 钳到 0", () => {

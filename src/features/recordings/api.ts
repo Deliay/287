@@ -15,9 +15,9 @@ import type {
 } from "./types";
 
 /** 录播服务默认基址（生产）。 */
-export const DEFAULT_RECORDINGS_BASE_URL = "https://recordings.vtuber.fffdan.com";
+const DEFAULT_RECORDINGS_BASE_URL = "https://recordings.vtuber.fffdan.com";
 /** 弹幕（直播事件）服务默认基址（生产）。 */
-export const DEFAULT_API_BASE_URL = "https://api.sumire.live";
+const DEFAULT_API_BASE_URL = "https://api.sumire.live";
 
 export const RECORDINGS_BASE_URL =
   process.env.NEXT_PUBLIC_RECORDINGS_BASE_URL || DEFAULT_RECORDINGS_BASE_URL;
@@ -42,7 +42,7 @@ export class ApiError extends Error {
 }
 
 /** 基址与路径归一拼接（消除末尾/开头斜杠差异）。 */
-export function joinUrl(base: string, path: string): string {
+function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 

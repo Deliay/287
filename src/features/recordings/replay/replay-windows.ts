@@ -13,12 +13,10 @@ import type { RecordingFile } from "../types";
 /** 单窗口时长（10 分钟）。12h 的「单次查询区间」上限只存在于 api.ts（审核次要13）。 */
 export const WINDOW_MS = 600_000;
 
-/** 目标文件（分段）实际覆盖区间；`endMs` 无法确定时为 `NaN`。 */
+/** 目标文件（分段）实际覆盖区间；`endMs` 无法确定时为 `NaN`。与技术方案 §4.2 契约一致（仅 startMs/endMs，审核 R8-b）。 */
 export interface SegmentBounds {
   startMs: number;
   endMs: number;
-  /** true 表示 `info.startedAt` 缺失、回退 `createdAt` 口径（近似）。 */
-  fallback: boolean;
 }
 
 function parseMs(value: string | undefined | null): number | null {
@@ -32,7 +30,7 @@ function parseMs(value: string | undefined | null): number | null {
  * - 首段起点 = `info.startedAt`；
  * - 其余段起点 = **前一段** `createdAt`（绝不用目标文件自身 `createdAt` 作锚点）；
  * - 非末段终点 = 本段 `createdAt`；末段终点 = `info.endedAt`（缺失回退本段 `createdAt`）；
- * - `info.startedAt` 缺失时回退 `createdAt` 为起点（`fallback = true`），终点无法确定为 `NaN`。
+ * - `info.startedAt` 缺失时回退 `createdAt` 为起点，终点无法确定为 `NaN`（审核 R8-b：不再输出 fallback 标记字段）。
  *
  * `target` 为文件名；找不到时抛 `RangeError`（调用方先回源 recordings 列表）。
  */
@@ -44,7 +42,6 @@ export function segmentBoundsForFile(files: RecordingFile[], target: string): Se
   const infoStart = parseMs(file.info?.startedAt);
   const infoEnd = parseMs(file.info?.endedAt);
   const recordingId = file.info?.recordingId;
-  const fallback = infoStart === null;
   const sessionStart = infoStart ?? targetCreated;
 
   const siblings = recordingId
@@ -74,7 +71,7 @@ export function segmentBoundsForFile(files: RecordingFile[], target: string): Se
     endMs = Number.NaN;
   }
 
-  return { startMs, endMs, fallback };
+  return { startMs, endMs };
 }
 
 /** 偏移毫秒 → 窗口序号（负值 / 非法值钳到 0）。 */
@@ -110,7 +107,8 @@ export function toIso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
-/** 事件墙上时钟 → 相对录播起点的偏移（毫秒）。 */
-export function offsetMsFor(occurredAt: string, recordStart: string): number {
-  return Date.parse(occurredAt) - Date.parse(recordStart);
+/** 事件墙上时钟 → 相对录播起点的偏移（毫秒）。`recordStart` 接受 ISO 字符串或毫秒数（收敛三处内联重复，审核 R8-b）。 */
+export function offsetMsFor(occurredAt: string, recordStart: string | number): number {
+  const start = typeof recordStart === "number" ? recordStart : Date.parse(recordStart);
+  return Date.parse(occurredAt) - start;
 }
