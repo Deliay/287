@@ -1,0 +1,309 @@
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mantine-spacing-md);
+}
+
+.back {
+  flex: 0 0 auto;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-3);
+  padding: 6px 12px;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 999px;
+}
+
+.back:hover {
+  color: var(--mantine-color-night287-0);
+  border-color: var(--mantine-color-night287-4);
+}
+
+.headings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: clamp(20px, 3vw, 28px);
+  font-weight: 700;
+  color: var(--mantine-color-night287-0);
+}
+
+.meta {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-4);
+}
+
+/* PC：视频 4/5 + 事件列表 1/5；移动端上下布局（设计文档 §2.5） */
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+  min-height: 0;
+}
+
+@media (min-width: 48em) {
+  .layout {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .videoColumn {
+    flex: 4 1 0;
+    min-width: 0;
+  }
+
+  .timeline {
+    flex: 1 1 0;
+    min-width: 240px;
+  }
+}
+
+.videoColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+}
+
+.videoArea {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.overlayState,
+.overlayError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mantine-spacing-xs);
+  background: rgb(0 0 0 / 55%);
+  color: var(--mantine-color-night287-0);
+  font-size: var(--mantine-font-size-sm);
+  text-align: center;
+  padding: var(--mantine-spacing-md);
+}
+
+.overlayError {
+  color: var(--mantine-color-komichi-6);
+}
+
+.overlayError button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+
+.degrade {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 12px;
+  color: var(--mantine-color-night287-3);
+  font-size: var(--mantine-font-size-md);
+  text-align: center;
+  padding: var(--mantine-spacing-md);
+}
+
+.controls,
+.controlsHidden {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-7);
+  border-radius: 10px;
+}
+
+.controlsHidden {
+  opacity: 0.25;
+}
+
+.controls button,
+.controls select {
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.controls button:hover,
+.controls select:hover {
+  border-color: var(--mantine-color-night287-4);
+  color: var(--mantine-color-night287-0);
+}
+
+.progressWrap {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-width: 80px;
+}
+
+.buffered {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  background: var(--mantine-color-night287-5);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.progressWrap input[type="range"] {
+  position: relative;
+  width: 100%;
+  accent-color: var(--mantine-color-night287-3);
+}
+
+.time {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-3);
+  white-space: nowrap;
+}
+
+.volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.volume input[type="range"] {
+  width: 72px;
+  accent-color: var(--mantine-color-night287-3);
+}
+
+/* 事件列表 */
+.timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+  min-height: 240px;
+  max-height: 640px;
+}
+
+.list {
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--mantine-color-night287-7);
+  border-radius: 12px;
+  background: var(--mantine-color-night287-8);
+  padding: var(--mantine-spacing-xs);
+}
+
+.entry,
+.entryCurrent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mantine-spacing-xs);
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--mantine-color-night287-7);
+  background: transparent;
+  color: var(--mantine-color-night287-2);
+  padding: 8px;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.entry:hover {
+  background: var(--mantine-color-night287-7);
+  color: var(--mantine-color-night287-0);
+}
+
+.entryCurrent {
+  background: color-mix(in srgb, var(--mantine-color-night287-6) 35%, transparent);
+  color: var(--mantine-color-night287-0);
+  box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
+}
+
+.entryTime {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-night287-4);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.entryText {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listState {
+  padding: var(--mantine-spacing-md);
+  color: var(--mantine-color-night287-4);
+  font-size: var(--mantine-font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+}
+
+.listState button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.followButton {
+  align-self: flex-end;
+  border: 1px solid var(--mantine-color-night287-4);
+  background: var(--mantine-color-night287-8);
+  color: var(--mantine-color-night287-1);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: var(--mantine-font-size-xs);
+  cursor: pointer;
+}
+
+/* 页级错误/提示 */
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--mantine-spacing-sm);
+  padding: 64px 0;
+  color: var(--mantine-color-night287-3);
+}
+
+.message a {
+  color: var(--mantine-color-night287-2);
+  text-decoration: underline;
+}

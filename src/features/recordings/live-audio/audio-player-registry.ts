@@ -254,7 +254,8 @@ export const defaultLivePlayerFactory: LivePlayerFactory = async ({ url, media, 
   player.on(mpegts.Events.ERROR, handleError);
   player.attachMediaElement(media);
   player.load();
-  void player.play().catch(() => onError());
+  // play() 在部分实现返回 void，统一按 Promise 处理失败回调
+  void Promise.resolve(player.play()).catch(() => onError());
   return {
     setVolume(next: number) {
       media.volume = next;

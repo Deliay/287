@@ -128,7 +128,8 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
   const { uid, name, face, medal, guardLevel } = sender;
   if (typeof uid !== "number" || typeof name !== "string" || typeof face !== "string") return null;
   if (guardLevel !== null && typeof guardLevel !== "number") return null;
-  if (medal !== null) {
+  let parsedMedal: { name: string; level: number; color: string } | null = null;
+  if (medal !== null && medal !== undefined) {
     if (
       !isRecord(medal) ||
       typeof medal.name !== "string" ||
@@ -137,18 +138,13 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
     ) {
       return null;
     }
+    parsedMedal = { name: medal.name, level: medal.level, color: medal.color };
   }
   const event: LiveEvent = {
     eventId,
     type,
     occurredAt,
-    sender: {
-      uid,
-      name,
-      face,
-      medal: medal === null ? null : { name: medal.name, level: medal.level, color: medal.color },
-      guardLevel: guardLevel ?? null,
-    },
+    sender: { uid, name, face, medal: parsedMedal, guardLevel: guardLevel ?? null },
   };
   if (typeof content === "string") event.content = content;
   if (

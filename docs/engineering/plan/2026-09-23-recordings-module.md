@@ -13,7 +13,7 @@
 
 ## 1. 任务拆解
 
-### T0 依赖与 mpegts.js 补丁（前置任务，非功能代码）
+### T0 依赖与 mpegts.js 补丁（前置任务，非功能代码） ✅
 
 - 安装运行时依赖 `mpegts.js`（`^1.8`，锁定精确版本）。
 - 用 `gh api repos/Deliay/sumire/contents/patches` 获取参考站 `patches/mpegts.js@1.8.2.patch`，移植为 `patches/mpegts.js@<锁定版本>.patch`（暴露 `seekToByteOffset` / `setBufferLimits`，见技术方案 §3.3）。
@@ -21,7 +21,7 @@
 - 验证：写一个临时测试 import mpegts.js 并断言补丁方法存在于原型上，跑通后删除临时测试。（**执行调整**：保留为常驻回归用例 `tests/mpegts-patch.test.ts`，补丁失效时立即暴露，代价为一个 3ms 用例。）
 - 预计：1h。
 
-### T1 类型与 API 封装 `src/features/recordings/types.ts` + `api.ts`
+### T1 类型与 API 封装 `src/features/recordings/types.ts` + `api.ts` ✅
 
 - 产出：`RecordingStatusResponse` / `RoomRecordingsResponse` / `LiveEvent` 等类型（字段与技术方案 §4.1 已实测结构一致）；`fetchRecordingStatus()` / `fetchRoomRecordings(roomId)` / `fetchLiveEvents({roomId, start, end, page, pageSize})` 封装，含轻量类型守卫（不引入 zod）与错误归一化（网络错误 / 非 2xx / 结构不符 → 统一 `ApiError`）；基址读 `NEXT_PUBLIC_RECORDINGS_BASE_URL` / `NEXT_PUBLIC_API_BASE_URL`，缺失回退生产默认值。
 - **测试用例（红）**：
@@ -32,7 +32,7 @@
 - 对应验收：AC-2 / AC-4 / AC-7 的数据来源基础。
 - 预计：1.5h。
 
-### T2 成员数据扩展 `src/data/members.ts`
+### T2 成员数据扩展 `src/data/members.ts` ✅
 
 - 产出：`Member` 增加 `roomId?: number`（接口未返回该成员时录播分组兜底用）；补充 `mid` 关联说明注释。（**执行调整**：同时补 `mid: number` 字段显式承载 B 站 UID，替代从 `bilibili` 直链解析，供 T6/T7 按 `mid` 关联 recording-status。）房间号以 `recording-status` 返回为准，本字段仅兜底（技术方案 §4.3）。
 - **测试用例（红）**：
@@ -41,7 +41,7 @@
 - 对应验收：AC-2 / AC-4 的数据关联基础。
 - 预计：0.5h。
 
-### T3 多路音频注册表 `src/features/recordings/live-audio/audio-player-registry.ts`
+### T3 多路音频注册表 `src/features/recordings/live-audio/audio-player-registry.ts` ✅
 
 - 产出：模块级 `Map<roomId, AudioLane>` 注册表，契约按技术方案 §4.2：`play / stop / stopAll / setVolume / retry / subscribeLanes / getLanesSnapshot`；每 lane 持有隐藏 `<video>` 元素 + 独立 `mpegts.createPlayer({ isLive: true })` 实例（mpegts 以工厂注入便于 mock）；上限 4 路，同 roomId 重复 `play` 幂等；单路错误仅标记该 lane 为 `error`。
 - **测试用例（红）**：
@@ -54,7 +54,7 @@
 - 对应验收：AC-3、AC-8（注册表存活部分）。
 - 预计：2.5h。
 
-### T4 悬浮播放组件 `src/features/recordings/live-audio/floating-audio-player.tsx` + `src/app/layout.tsx`
+### T4 悬浮播放组件 `src/features/recordings/live-audio/floating-audio-player.tsx` + `src/app/layout.tsx` ✅
 
 - 产出：`FloatingAudioPlayer`（Client Component），`useSyncExternalStore` 订阅注册表；隐藏媒体元素宿主（所有 lane 的 `<video>` 挂载于此，root layout 内不随路由卸载——跨页面不断流的关键，技术方案 §3.1）；展开态（每路成员色块+名/状态/音量/停止 + 全部停止）与迷你条互切；0 路时不渲染；移动端底部全宽 + 安全区适配（CSS Module + postcss-preset-mantine 断点）。`layout.tsx` 在 `MantineProvider` 内挂载。
 - **测试用例（红）**：
@@ -65,7 +65,7 @@
 - 对应验收：AC-8。
 - 预计：2h。
 
-### T5 导航入口 `src/components/site-header.tsx`
+### T5 导航入口 `src/components/site-header.tsx` ✅
 
 - 产出：`navItems` 增加 `{ label: "录播", href: "/recordings" }`（首页 → 录播顺序）；现有「首页」锚点逻辑（lenis 回顶）仅对 `#top` 生效，`/recordings` 走普通站内跳转；当前页加亮（设计文档 §2.1，`usePathname` 判断）。
 - **测试用例（红）**：
@@ -75,7 +75,7 @@
 - 对应验收：AC-1。
 - 预计：1h。
 
-### T6 直播状态卡片 `src/features/recordings/live-status-grid.tsx`
+### T6 直播状态卡片 `src/features/recordings/live-status-grid.tsx` ✅
 
 - 产出：`useRecordingStatus()`（首拉 + 30s 轮询，`visibilitychange` 暂停/恢复即刷）+ `LiveStatusGrid`：四张成员卡片按绿黑白紫渲染，成员色指示条/徽标/直播标题/更新时间按设计文档 §2.3；接口未返回的成员兜底「未开播」；「听直播」按钮接入 T3 注册表（`state === "recording"` 可用，收听中转「停止收听」，失败态显示重试）；卡片点击滚动定位对应录播分组。
 - **测试用例（红）**：
@@ -87,7 +87,7 @@
 - 对应验收：AC-2、AC-3（UI 部分）。
 - 预计：2.5h。
 
-### T7 历史录播列表 `src/features/recordings/recordings-section.tsx`
+### T7 历史录播列表 `src/features/recordings/recordings-section.tsx` ✅
 
 - 产出：按成员分组的 `RecordingsSection`：折叠态不请求；分组头进入视口（`IntersectionObserver`）或首次展开时触发 `fetchRoomRecordings`；骨架加载态 / 空态 / 错误重试态按设计文档 §2.4；按 `info.startedAt` 倒序；`PAGE_SIZE = 20` 分页；条目展示标题（缺失回退文件名）、录制时间、时长（`endedAt - startedAt`）、文件大小；点击条目 `next/link` 跳 `/recordings/replay?roomId=…&file=…`。
 - **测试用例（红）**：
@@ -99,16 +99,16 @@
 - 对应验收：AC-4。
 - 预计：2.5h。
 
-### T8 录播页组装 `src/app/recordings/page.tsx`
+### T8 录播页组装 `src/app/recordings/page.tsx` ✅
 
-- 产出：组装「当前直播」（T6）+「历史录播」（T7）两区块标题与布局；页面 metadata。
+- 产出：组装「当前直播」（T6）+「历史录播」（T7）两区块标题与布局；页面 metadata。（**执行调整**：`page.tsx` 保持为服务器组件壳以导出 metadata，客户端组装位于新增的 `src/features/recordings/recordings-view.tsx`，由其单次调用 `useRecordingStatus` 供两区块共享，保证首屏仅一个接口。）
 - **测试用例（红）**：
   1. 页面渲染「当前直播」「历史录播」两区块，且首拉仅请求 recording-status 一个接口（需求 §5 性能）。
 - 全量验证：`pnpm test && pnpm lint && pnpm build`，确认 `out/recordings.html`（或对应静态产物）存在。
 - 对应验收：AC-2 / AC-4 组装回归、AC-9（部分）。
 - 预计：1h。
 
-### T9 时间锚点与分段推导 `src/features/recordings/replay/replay-windows.ts`
+### T9 时间锚点与分段推导 `src/features/recordings/replay/replay-windows.ts` ✅
 
 - 产出：`segmentBoundsForFile(files, target)`（同 `recordingId` 兄弟文件按 `createdAt` 升序推导各分段起止，锚点用首段 `info.startedAt`，技术方案 §3.3）与 `windowIndexFor(offsetMs)`（`WINDOW_MS = 600_000`）。
 - **测试用例（红）**：
@@ -118,7 +118,7 @@
 - 对应验收：AC-7（对齐基准）。
 - 预计：1.5h。
 
-### T10 弹幕窗口加载 `src/features/recordings/replay/replay-events.ts`
+### T10 弹幕窗口加载 `src/features/recordings/replay/replay-events.ts` ✅
 
 - 产出：`useReplayEvents(roomId, bounds)`：10 分钟窗口增量拉取 `fetchLiveEvents`（遵守区间 ≤12h、pageSize ≤100，页内翻页拉全），`Map` 缓存窗口、`AbortController` 竞态控制、窗口过半预取下一窗；`eventsFor(offsetMs)` 返回当前及相邻窗口去重升序事件。
 - **测试用例（红）**：
@@ -130,7 +130,7 @@
 - 对应验收：AC-7（数据加载部分）。
 - 预计：2h。
 
-### T11 回放播放器与 seek `flv-player.ts` + `seek.ts`
+### T11 回放播放器与 seek `flv-player.ts` + `seek.ts` ✅
 
 - 产出：`flv-player.ts` 封装 mpegts.js 回放 player（页面内生命周期，卸载销毁；`mpegts.isSupported()` 探测）；`seek.ts` 实现技术方案 §3.3 五步：缓冲内直接 `currentTime`；未缓冲按 `size/duration` 折算字节偏移 → `Range: bytes=<offset>-` 流式扫描 FLV tag 边界（校验 `PrevTagSize`、对齐视频关键帧 tag type=9 frameType=1）→ `seekToByteOffset`（T0 补丁方法）续播；非 206 放弃报错；15s 看门狗超时显性报错。缓冲预算 50MB（前瞻 60%/回退 40%）。
 - **测试用例（红）**：
@@ -143,7 +143,7 @@
 - 对应验收：AC-5、AC-6。
 - 预计：3.5h（本期最难任务，实现整体移植参考站 `seek.ts` 思路，不自研）。
 
-### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx`
+### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx` ✅
 
 - 产出：canvas 2D + rAF 浮层：匀速右→左横穿（约 8s）、轨道分配防重叠、字号随画布宽度缩放、表情弹幕（`emote.url`）预载 `Image` 绘制；正常播放发射 `(prev, current]` 区间事件，seek 跳变（回退或前跳 >2s）清空并补发最近 4s；弹幕开关。
 - **测试用例（红）**：
@@ -154,9 +154,9 @@
 - 对应验收：AC-7（浮层部分）。
 - 预计：2.5h。
 
-### T13 回放页舞台与路由 `replay-stage.tsx` + `src/app/recordings/replay/page.tsx`
+### T13 回放页舞台与路由 `replay-stage.tsx` + `src/app/recordings/replay/page.tsx` ✅
 
-- 产出：`page.tsx` 以 `Suspense` 包裹 `useSearchParams` 解析 `roomId`/`file`（静态导出要求）；`ReplayStage` 组装：页头（返回录播列表 + 标题 + 成员名 + 录制时间）、视频区（T11 player + T12 浮层）、控件栏（播放/暂停、进度条含缓冲显示、音量、倍速 0.5–2、全屏、弹幕开关；静止 3s 自动隐藏）、事件列表（时间升序、跟随播放高亮、手动滚动暂停跟随 +「回到底部跟随」按钮、点击条目 `onSeek`）；PC 4/5 + 1/5、移动端上下布局（设计文档 §2.5）；MSE 不支持显示降级文案；seek 中 spinner + 进度锁定、失败错误 + 重试。
+- 产出：`page.tsx` 以 `Suspense` 包裹 `useSearchParams` 解析 `roomId`/`file`（静态导出要求；参数解析与回源由 `replay-stage.tsx` 导出的 `ReplayView` 承担，控件/事件列表为同文件子组件）；`ReplayStage` 组装：页头（返回录播列表 + 标题 + 成员名 + 录制时间）、视频区（T11 player + T12 浮层）、控件栏（播放/暂停、进度条含缓冲显示、音量、倍速 0.5–2、全屏、弹幕开关；静止 3s 自动隐藏）、事件列表（时间升序、跟随播放高亮、手动滚动暂停跟随 +「回到底部跟随」按钮、点击条目 `onSeek`）；PC 4/5 + 1/5、移动端上下布局（设计文档 §2.5）；MSE 不支持显示降级文案；seek 中 spinner + 进度锁定、失败错误 + 重试。
 - **测试用例（红）**：
   1. 缺少 `roomId`/`file` 参数 → 错误提示而非白屏。
   2. 页头渲染录播标题（`info.title` 回源 recordings 列表）与返回链接 `/recordings`。
@@ -168,11 +168,13 @@
 - 对应验收：AC-5、AC-6、AC-7（组装）、AC-9（路由导出）。
 - 预计：3h。
 
-### T14 全量验收
+### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。
 - 按 §3 人工验收清单逐项对照（真实流播放、多路混音、seek 命中率、弹幕视觉、移动端、iOS 降级）。
 - 回填本文档任务完成标记与人工验收记录。
+  - **自动化验收（2026-09-23，已执行）**：`pnpm test` 20 个文件 107 用例全绿；`pnpm lint` 0 问题；`pnpm build` 成功且静态导出产物包含 `/recordings` 与 `/recordings/replay` 路由（`out/recordings.html`、`out/recordings/replay.html`）；`wrangler dev` 下 `/`、`/recordings`、`/recordings/replay` 均 200 且返回预期 HTML；`tsc --noEmit` 无错误。
+  - **人工验收（待人类执行）**：真实流播放手感、四路混音、seek 实际命中率、弹幕视觉与移动端布局、iOS Safari 降级提示等依赖真实开播房间与多端环境的项，本节点无法自动完成，留待人工按下方清单逐项确认。
 - 对应验收：AC-9 及全部 AC 整体回归。
 - 预计：1.5h。
 

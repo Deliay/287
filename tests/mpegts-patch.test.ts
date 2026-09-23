@@ -9,7 +9,11 @@ import mpegts from "mpegts.js";
  */
 describe("mpegts.js 补丁（字节偏移 seek / 缓冲上限）", () => {
   it("createPlayer 返回的实例带 seekToByteOffset 与 setBufferLimits", () => {
-    const player = mpegts.createPlayer({ type: "flv", isLive: true, url: "http://example.invalid/live.flv" });
+    const player = mpegts.createPlayer({ type: "flv", isLive: true, url: "http://example.invalid/live.flv" }) as unknown as {
+      seekToByteOffset?: unknown;
+      setBufferLimits?: unknown;
+      destroy(): void;
+    };
     expect(typeof player.seekToByteOffset).toBe("function");
     expect(typeof player.setBufferLimits).toBe("function");
     player.destroy();
