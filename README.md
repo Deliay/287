@@ -29,8 +29,16 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Deploy on Cloudflare
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+本站采用 Next.js 静态导出（`output: "export"`），通过 [wrangler](https://developers.cloudflare.com/workers/wrangler/) 部署为 Cloudflare Workers Static Assets，构建产物为根目录 `out/`（配置见 `wrangler.toml`）。
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+# 部署前本地预览（构建 + wrangler dev，默认 http://localhost:8787）
+pnpm run preview
+
+# 构建并部署到 Cloudflare（需先 pnpm exec wrangler login 或设置 CLOUDFLARE_API_TOKEN）
+pnpm run deploy
+```
+
+本地开发仍使用 `pnpm run dev`；静态导出不支持 `next start`，因此不提供 `start` 脚本。

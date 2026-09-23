@@ -36,6 +36,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# wrangler 本地状态（miniflare 缓存等，非部署配置）
+.wrangler/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
