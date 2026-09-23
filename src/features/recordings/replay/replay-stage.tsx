@@ -46,11 +46,20 @@ const CONTROLS_HIDE_MS = 3000;
 const SEEK_LAND_TOLERANCE = 1;
 /** 落位判定：单次媒体采样内位移超过该值（秒）视为 seek 跳变落位，而非旧播放的连续推进（审核 R1）。 */
 const SEEK_SAMPLE_JUMP_SECONDS = 2;
+/** 落位判定容差（秒）：`seeked` 位置与 apply 时采样落点的比对容差（落位动作前后对比，审核 R7-c）。 */
+const SEEK_LANDING_EPS = 0.5;
 /**
- * 前次 apply 的补丁残留窗口（ms）：`scheduleSeekAlignment` 每次 apply 后最多 20×250ms 的 clamp 链，
- * 其触发的裸 `seeked` 可能跨任务源乱序晚到——窗口内的 `seeked` 不作为本次落位信号（审核 R6-c）。
+ * `seeked` 归属的「目标窗口」（秒）：位置距本次目标 ≤ 该窗口即认为反映本次落位动作——
+ * 覆盖关键帧/RECOMMEND_SEEKPOINT 落点与目标可差一个 GOP（约 8s）的常态（审核 R7-c）。
  */
-const RESIDUAL_CLAMP_WINDOW_MS = 5_000;
+const SEEK_TARGET_WINDOW_SECONDS = 10;
+/**
+ * 前次 apply 的补丁残留 clamp 链窗口（ms）：`scheduleSeekAlignment` 为 apply 后 250ms×20 次、
+ * 末次恰在 +5.0s，取 **5.0s 链长 + 1.0s 投递余量 = 6.0s**。
+ * 仅用于约束 **timeupdate 的跳变/邻域证据**（启发式信号）；`seeked` 一律按位置归属判定，不受此窗约束
+ * （时间窗不是归属判据，审核 R7-c）。
+ */
+const RESIDUAL_CLAMP_WINDOW_MS = 6_000;
 
 /** 依赖注入点：单测替换播放器/取数实现，生产走默认实现。 */
 export interface ReplayStageDeps {
@@ -106,13 +115,19 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   /** 最近一次 seek 目标（重试按钮用） */
   const lastSeekRef = useRef<number | null>(null);
   /**
-   * 本次 seek 的落位上下文（审核 R1/R5）：`applied` 表示 performSeek 已生效，
-   * 只有生效之后的信号才算「本次真实落位」——飞行期旧播放推进（哪怕已进目标邻域）
-   * 与上一次 seek 的残留 clamp/seeked 一律不得消费本 latch。
+   * 本次 seek 的落位监控（审核 R1/R5/R7）：`applied` 表示 performSeek 已生效；
+   * `expected` 为 apply 时刻采样的落点（补丁 directSeek 同步写入的 currentTime），
+   * 供后续 `seeked`/媒体事件做**落位动作前后对比**的归属判定（审核 R7-c）。
+   * 注意：看门狗超时**不**清本监控——迟到的真实落位仍须清除超时浮层（审核 R7-a）；
+   * 只有「归属成立的落位 / 新 seek 接管 / 卸载」才终结它。
    */
-  const seekResumeRef = useRef<{ token: number; target: number; applied: boolean; prevApplyAt: number | null } | null>(
-    null,
-  );
+  const seekResumeRef = useRef<{
+    token: number;
+    target: number;
+    applied: boolean;
+    expected: number | null;
+    prevApplyAt: number | null;
+  } | null>(null);
   /** 终局作废信号：超时/失败/被新 seek 取代/卸载时 abort 在途 Range 请求与后续 apply（审核 R6-a） */
   const seekAbortRef = useRef<AbortController | null>(null);
   /** 最近一次 performSeek 生效的时间戳：用于识别前次补丁 clamp 链的残留 seeked（审核 R6-c） */
@@ -254,17 +269,53 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
    * 三条信号（目标邻域 / 采样跳变 / seeked）必须同时满足：代次属于本次 seek、
    * 且 performSeek 已生效（`applied`）——飞行期一律不消费（审核 R5-a/b）。
    */
-  const landResume = useCallback(() => {
-    const watchdog = watchdogRef.current;
-    const resume = seekResumeRef.current;
-    if (!watchdog || !resume) return;
-    if (resume.token !== seekTokenRef.current) return;
-    if (!resume.applied) return; // 尚未生效：不是本次 seek 的真实落位
-    watchdog.disarm(); // 终局解除（disposed），迟到的 arm 不会复活
+  /**
+   * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
+   * 解除看门狗、收敛中态，并清除错误浮层（迟到的真实落位不得残留「seek 超时」，R7-a）。
+   */
+  const convergeLanding = useCallback(() => {
+    watchdogRef.current?.disarm();
     watchdogRef.current = null;
     seekResumeRef.current = null;
+    abortedTokenRef.current = null;
     setSeeking(false);
+    setSeekError(null);
   }, []);
+
+  /**
+   * 落位归属判定（审核 R7-c）——不以 latch 存在性、paused 或裸时间猜窗为判据：
+   * - 前置：本次 seek 已生效（applied）且代次一致；飞行期（applied=false）一律不消费（R5-a）；
+   * - `seeked`：**位置比对（落位动作前后对比）**——与 apply 时刻采样落点差 ≤0.5s，
+   *   或发生位移后落在目标 ±10s（GOP 级）窗口内；不受任何时间窗约束；
+   * - 媒体事件（timeupdate 等）：邻域/落点/跳变三类证据，且避开**前次 apply 的残留 clamp 链窗口**
+   *   （6.0s = 链长 5.0s + 投递余量 1.0s）——该窗只约束启发式跳变证据，不是归属判据。
+   * 残余歧义（如实记录）：前次 clamp 落点恰好落在本次落点 ±0.5s 内的极窄情形，应用层无法仅凭位置区分。
+   */
+  const tryLand = useCallback(
+    (media: HTMLVideoElement, source: "seeked" | "media") => {
+      const resume = seekResumeRef.current;
+      if (!resume || !resume.applied) return;
+      if (resume.token !== seekTokenRef.current) return;
+      const current = media.currentTime;
+      const expected = resume.expected;
+      const nearExpected = expected !== null && Math.abs(current - expected) <= SEEK_LANDING_EPS;
+      const nearTarget = Math.abs(current - resume.target) <= SEEK_LAND_TOLERANCE;
+      const withinTargetWindow = Math.abs(current - resume.target) <= SEEK_TARGET_WINDOW_SECONDS;
+      const movedFromExpected = expected !== null && Math.abs(current - expected) > SEEK_LANDING_EPS;
+      const previous = lastSampleRef.current;
+      const jumped =
+        previous !== null && Math.abs(current - previous) > SEEK_SAMPLE_JUMP_SECONDS;
+      const inResidualWindow =
+        resume.prevApplyAt !== null && Date.now() - resume.prevApplyAt < RESIDUAL_CLAMP_WINDOW_MS;
+
+      const attributed =
+        source === "seeked"
+          ? nearExpected || (movedFromExpected && withinTargetWindow)
+          : !inResidualWindow && (nearExpected || nearTarget || jumped);
+      if (attributed) convergeLanding();
+    },
+    [convergeLanding],
+  );
 
   const handleMediaEvent = useCallback(
     (media: HTMLVideoElement) => {
@@ -297,41 +348,22 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         return ranges;
       });
 
-      // 续播判定（审核 R1/R5）：只认「本次 seek 生效后的真实落位」——
-      //  a) 落位到目标邻域（±1s）；b) 单次采样内跳变（seek 落位 vs 旧播放连续推进）。
-      //  applied=false（网络/扫描飞行期）时一律不消费，旧播放哪怕推进到目标邻域也不解除。
-      const resume = seekResumeRef.current;
-      if (
-        resume &&
-        resume.token === seekTokenRef.current &&
-        resume.applied &&
-        watchdogRef.current
-      ) {
-        const previous = lastSampleRef.current;
-        const nearTarget = Math.abs(media.currentTime - resume.target) <= SEEK_LAND_TOLERANCE;
-        const jumped =
-          previous !== null && Math.abs(media.currentTime - previous) > SEEK_SAMPLE_JUMP_SECONDS;
-        if (nearTarget || jumped) landResume();
-      }
+      // 落位归属判定（审核 R7-c）：飞行期不消费；终局后的真实落位仍可收敛并清错（R7-a）
+      tryLand(media, "media");
       lastSampleRef.current = media.currentTime;
       // 注意：不在这里无条件 setSeeking(false)——seek 中态由 seek 生命周期收敛（审核 P3-c）
     },
-    [file.size, landResume],
+    [file.size, tryLand],
   );
 
-  /** 补丁 directSeek 落位后的 `seeked`：仅在本次 seek 已生效、且不处于前次 apply 的残留 clamp 窗口内消费
-   *  （跨任务源乱序时残留 seeked 可能晚到，按 R6-c 归属窗口丢弃，落位改由位置信号兜底）。 */
+  /** 补丁 directSeek / RECOMMEND_SEEKPOINT 落位后的 `seeked`：按位置归属判定（R7-c），
+   *  并同步采样点，避免被丢弃的残留位置污染后续跳变证据。 */
   const handleSeeked = useCallback(() => {
-    const resume = seekResumeRef.current;
-    if (
-      resume &&
-      resume.prevApplyAt !== null &&
-      Date.now() - resume.prevApplyAt < RESIDUAL_CLAMP_WINDOW_MS
-    ) {
-      return; // 前次 seek 的补丁 clamp 链残留：不认作本次落位
-    }
-    landResume();
-  }, [landResume]);
+    const media = videoRef.current;
+    if (!media) return;
+    tryLand(media, "seeked");
+    lastSampleRef.current = media.currentTime;
+  }, [tryLand]);
 
   // 播放推进：切换关注窗口 + 过半预取下一窗
   useEffect(() => {
@@ -383,19 +415,19 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         token,
         target: offsetSeconds,
         applied: false,
+        expected: null,
         prevApplyAt: lastApplyAtRef.current,
       };
       lastSampleRef.current = media ? media.currentTime : null;
 
       const watchdog = new SeekWatchdog(() => {
         if (seekTokenRef.current !== token) return;
-        // 终局：作废在途 seek（Range 请求 abort，迟到响应不得再触碰媒体元素，审核 R6-a）
+        // 终局：作废在途 seek（Range 请求 abort，迟到响应不得再触碰媒体元素，审核 R6-a）；
+        // 但**保留落位监控**（seekResumeRef/watchdogRef）——迟到的真实落位仍须清除超时浮层（审核 R7-a）
         controller.abort();
-        watchdogRef.current = null;
-        seekResumeRef.current = null;
         abortedTokenRef.current = token;
         setSeeking(false);
-        setSeekError("seek 超时：15 秒内未恢复播放");
+        setSeekError("seek 超时：未能在 15 秒内完成跳转"); // 中性文案：播放/暂停两种状态下均成立（审核 R7-b）
       });
       // 登记进 watchdogRef 并**发起即武装**：覆盖网络扫描全阶段，
       // Range 请求挂起也能在 15s 内显性超时（审核 R5-c）；任何结束路径 disarm 为终局（审核 R5-1）
@@ -425,16 +457,15 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           setSeekError(reason);
         },
         onAborted: () => {
-          // 本次 seek 已被终局作废（超时/失败/卸载）：不报新错，仅收敛中态；
-          // 若媒体实际仍在正常播放，清除与「真实播放」矛盾的超时浮层（审核 R6-a 不变量2）
+          // 本次 seek 被终局作废（超时/失败/卸载）：不报新错、**不以 paused 清错**（审核 R7-b：
+          // 旧播放是否在推进无法区分「seek 失败」与「新位置已续播」，错误必须保留到
+          // 归属成立的真实落位 / 用户重试 / 新 seek）。此处只收敛 spinner 与看门狗；
+          // 落位监控保留，供迟到的真实落位按归属清错（审核 R7-a）。
           if (seekTokenRef.current !== token) return;
           watchdog.disarm();
           if (watchdogRef.current === watchdog) watchdogRef.current = null;
-          seekResumeRef.current = null;
           abortedTokenRef.current = token;
           setSeeking(false);
-          const mediaNow = videoRef.current;
-          if (mediaNow && !mediaNow.paused) setSeekError(null);
         },
         watchdog,
       }).then((ok) => {
@@ -443,20 +474,15 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           const latch = seekResumeRef.current;
           if (latch && latch.token === token) {
             latch.applied = true;
-            lastApplyAtRef.current = Date.now();
-            // 已缓冲路径同步落位到目标邻域 → 立即收敛；
-            // 未缓冲路径落位点可能偏离目标（关键帧对齐常态），交给生效后的 seeked / 跳变信号收敛（审核 R1）
+            // 落位动作前后对比的「后」采样点：apply 时补丁已 directSeek，此刻 currentTime 即落点
             const media2 = videoRef.current;
+            latch.expected = media2 ? media2.currentTime : null;
+            lastApplyAtRef.current = Date.now();
+            // 已缓冲路径/落点已在目标邻域 → 立即收敛；否则交给生效后的 seeked（位置归属）收敛（审核 R1/R7-c）
             if (media2 && Math.abs(media2.currentTime - offsetSeconds) <= SEEK_LAND_TOLERANCE) {
-              landResume();
+              convergeLanding();
             }
-            return;
           }
-          // 迟到成功但本次 seek 已终局（超时/失败已报错）：真实恢复不得留下矛盾浮层（审核 R6-a 不变量2）
-          watchdog.disarm();
-          if (watchdogRef.current === watchdog) watchdogRef.current = null;
-          setSeeking(false);
-          setSeekError(null);
           return;
         }
         // 已被 abort 收敛（onAborted 已处理 UI）：不得再覆盖错误文案
@@ -475,7 +501,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       }
       setCurrentTime(offsetSeconds);
     },
-    [url, duration, file.size, performSeekFn, recordStartMs, focusWindow, landResume],
+    [url, duration, file.size, performSeekFn, recordStartMs, focusWindow, convergeLanding],
   );
 
   /** 进度条松开/键盘抬起才提交 seek（设计 §2.5「拖动松开后开始 seek」，审核 P3-a） */

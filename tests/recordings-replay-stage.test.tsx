@@ -693,7 +693,7 @@ describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属�
     return { fetchFn, release: () => holder.release?.(emptyRange) };
   }
 
-  it("R5(4) 超时作废在途 seek：迟到 Range 不执行补丁跳转，且不残留与实际播放矛盾的超时浮层", async () => {
+  it("R5(4) 超时作废在途 seek：迟到 Range 不执行补丁跳转，失败保持显性错误与重试", async () => {
     vi.useFakeTimers();
     const events = [makeEvent("e1", 61, "目标事件")];
     const pendingRange = makePendingRangeResponse();
@@ -732,15 +732,20 @@ describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属�
     await flush();
 
     expect(seekSpy).not.toHaveBeenCalled(); // 未执行补丁跳转（审核 R6-a 不变量1）
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // 不留「播放失败但实际在播」的矛盾浮层（不变量2）
+    // 终局仍须显性失败（审核 R7-b）：错误与重试持续可见，不以 paused 吞错
+    expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
   });
 
-  it("R6-c 前次 apply 后 5s 内到达的残留 seeked 不消费本次 latch（位置信号兜底落位）", async () => {
+  it("R6-c 残留 clamp 的 seeked 不消费本次 latch；真实落位（落点=apply 采样）经位置归属即时收敛", async () => {
     vi.useFakeTimers();
     const events = [makeEvent("e1", 61, "第一次"), makeEvent("e2", 120, "第二次")];
+    let videoEl: HTMLVideoElement | null = null;
+    // 模拟真实 apply：补丁 directSeek 同步把 currentTime 置到落点（与目标可偏离）
     const performSeek = vi.fn(async (args: PerformSeekArgs) => {
       args.watchdog?.arm();
+      if (videoEl) videoEl.currentTime = args.targetSeconds === 61 ? 61 : 118;
       return true;
     });
     const deps = makeDeps({
@@ -749,40 +754,217 @@ describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属�
     });
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
     await flush();
-
     const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    videoEl = video;
 
-    // 第一次 seek：立即生效并落位（建立 apply 时间戳）
+    // 第一次 seek：apply 后落点=目标 → 立即收敛（建立 apply 时间戳）
     fireEvent.click(screen.getByRole("button", { name: /第一次/ }));
-    await flush();
-    video.currentTime = 61;
-    fireEvent.timeUpdate(video); // nearTarget → land
     await flush();
     expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
 
-    // 1s 后发起第二次 seek（事件列表连点相邻条目：前次补丁 clamp 链仍在 5s 窗口内）
+    // 1s 后发起第二次 seek（前次补丁 clamp 链仍在运行）
     act(() => {
       vi.advanceTimersByTime(1_000);
     });
     fireEvent.click(screen.getByRole("button", { name: /第二次/ }));
     await flush();
+    await flush(); // performSeek resolve → applied（落点 118，偏离目标 2s → 不近目标，不收敛）
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 前次 seek 的 scheduleSeekAlignment 残留 seeked：位置与本次落点/目标均不符 → 不得消费
+    video.currentTime = 55;
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 真实落位：位置=本次 apply 采样落点（118）→ 按位置归属即时收敛
+    video.currentTime = 118;
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("第五轮审核返工：R7（真实落位归属为唯一收敛判据）", () => {
+  it("R7-a 关键帧落位晚于超时到达：真实落位清除超时浮层（latch/看门狗已终局也一样）", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    let videoEl: HTMLVideoElement | null = null;
+    // 注入 performSeek：8s 后 apply 成功（directSeek 已把 currentTime 落到关键帧 55，偏离目标 6s >1s）
+    const performSeek = vi.fn(
+      (args: PerformSeekArgs) =>
+        new Promise<boolean>((resolve) => {
+          window.setTimeout(() => {
+            if (videoEl) videoEl.currentTime = 55; // apply：落点=关键帧时间戳
+            args.watchdog?.arm();
+            resolve(true);
+          }, 8_000);
+        }),
+    );
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    videoEl = video;
+
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+    act(() => {
+      vi.advanceTimersByTime(8_000); // apply（落点偏离目标 >1s → nearTarget 不命中）
+    });
+    await flush();
     expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
 
     act(() => {
-      vi.advanceTimersByTime(100); // 第二次 performSeek 生效（applied）
+      vi.advanceTimersByTime(7_000); // T=15s：超时（此时仅清理 UI，落位监控继续）
+    });
+    await flush();
+    expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
+
+    // T=18s：真实落位数据到达（seeked，位置=apply 时采样的落点 55）
+    await flush();
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(); // 红：超时浮层残留于实际在播的视频之上
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+  });
+
+  it("R7-b 播放中 seek 超时：abort 令 fetch 立即 reject，错误与重试持续可见（不以 paused 吞错）", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    const seekSpy = vi.fn();
+    // 真实 fetch 时序：收到 abort 信号立即 reject
+    const fetchFn = ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) return;
+        if (signal.aborted) {
+          reject(new DOMException("Aborted", "AbortError"));
+          return;
+        }
+        signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+      })) as unknown as typeof fetch;
+    const performSeekImpl = vi.fn((args: PerformSeekArgs) =>
+      realPerformSeek({ ...args, fetchFn, seekToByteOffset: seekSpy }),
+    );
+    const deps = makeDeps({
+      performSeek: performSeekImpl,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    Object.defineProperty(video, "paused", { value: false, configurable: true }); // 播放中发起 seek（旧播放持续推进）
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+
+    act(() => {
+      vi.advanceTimersByTime(15_000); // 超时 → abort → fetch 立即 reject → onAborted
     });
     await flush();
 
-    // 前次 seek 的 scheduleSeekAlignment 残留 seeked 在本次 applied 之后才入队
-    fireEvent.seeked(video);
-    await flush();
-    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument(); // 不得被残留 seeked 提前消费
+    // 一切失败终局一律保留显性错误 + 重试（审核 R7-b / AC-6）
+    expect(screen.getByRole("alert")).toHaveTextContent("seek 超时");
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+    expect(seekSpy).not.toHaveBeenCalled();
+  });
 
-    // 真实落位由位置信号消费
-    video.currentTime = 118;
-    fireEvent.timeUpdate(video);
+  it("R7-c(1) 越窗（链尾 +5.0s 于 +5.3s）到达的残留 seeked 不得消费本次 latch", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "第一次"), makeEvent("e2", 120, "第二次")];
+    let videoEl: HTMLVideoElement | null = null;
+    const performSeek = vi.fn(async (args: PerformSeekArgs) => {
+      args.watchdog?.arm();
+      if (videoEl) videoEl.currentTime = args.targetSeconds === 61 ? 61 : 118; // apply 落点
+      return true;
+    });
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 2, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    videoEl = video;
+
+    fireEvent.click(screen.getByRole("button", { name: /第一次/ })); // apply at t0（建立 prevApplyAt）
     await flush();
     expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /第二次/ })); // apply 落点 118
+    await flush();
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 前次 clamp 链尾（+5.0s）的 seeked 于 +5.3s 投递（越过任何 5s 时间窗），位置为残留 clamp 落点
+    act(() => {
+      vi.advanceTimersByTime(5_200);
+    });
+    video.currentTime = 60.5; // 残留 clamp 落点：既非本次落点 118、也非目标 120 邻域
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument(); // 红：越窗残留 seeked 提前消费 latch
+
+    // 真实落位（位置=本次 apply 采样落点）仍可归属收敛
+    video.currentTime = 118;
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("R7-c(2) 窗内真实落位（目标近距、非大位移）经位置归属即时收敛，不被时间窗误杀", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "第一次"), makeEvent("e2", 120, "第二次")];
+    const performSeek = vi.fn(async (args: PerformSeekArgs) => {
+      args.watchdog?.arm();
+      return true; // apply 成功但落位数据未到：currentTime 仍停在旧位置（补丁 RECOMMEND_SEEKPOINT 后续才落位）
+    });
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 2, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    video.currentTime = 61;
+
+    fireEvent.click(screen.getByRole("button", { name: /第一次/ }));
+    await flush();
+    video.currentTime = 61; // 第一次落位到目标 → 收敛（建立 prevApplyAt）
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /第二次/ })); // target 120，apply 后 currentTime 仍为 61
+    await flush();
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // 窗内（前次 apply 后 1.1s）真实落位 seeked：位置=目标近距（119.5 vs 120，非大位移）→ 立即收敛
+    video.currentTime = 119.5;
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument(); // 红：被时间窗误杀，只能等超时
 
     act(() => {
       vi.advanceTimersByTime(16_000);

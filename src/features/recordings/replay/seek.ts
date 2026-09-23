@@ -359,7 +359,7 @@ export class SeekWatchdog {
 
   arm(): void {
     // 幂等且严格自计时（审核 R6-a 顺带决策点）：已武装时不再重置 15s 计时，
-    // 超时始终以「seekTo 发起」为起点，文案「15 秒内未恢复播放」与真实计时一致；
+    // 超时始终以「seekTo 发起」为起点，文案「未能在 15 秒内完成跳转」与真实计时一致；
     // 终局态（disarm/超时后）arm 一律为空操作，杜绝孤儿定时器。
     if (this.disposed || this.timer !== null) return;
     this.timer = setTimeout(() => {
@@ -455,7 +455,7 @@ export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
     return false;
   }
 
-  const watchdog = args.watchdog ?? new SeekWatchdog(() => onFailed("seek 超时：15 秒内未恢复播放"));
+  const watchdog = args.watchdog ?? new SeekWatchdog(() => onFailed("seek 超时：未能在 15 秒内完成跳转"));
   watchdog.arm();
   return true;
 }
