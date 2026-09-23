@@ -80,7 +80,7 @@ export const members: Member[] = [
     colorKey: "sumire",
     image: "/images/members/sumire.avif",
     imagePosition: "-25% -15%",
-    imagePositionDetail: "75% 0%",
+    imagePositionDetail: "85% 0%",
     imagePositionMobileHero: "-35% 3%",
     imagePositionMobileDetail: "-50% 0%",
     bilibili: "https://space.bilibili.com/1150976664",

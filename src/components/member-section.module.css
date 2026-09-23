@@ -94,6 +94,8 @@
 
   .art {
     transform: scale(0.75) translateY(50%);
+    object-position: var(--art-pos);
+    transform-origin: var(--art-pos);
   }
 
   .figure {
