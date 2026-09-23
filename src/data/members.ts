@@ -12,13 +12,13 @@ export interface Member {
   colorKey: "viridis" | "komichi" | "chu2u" | "sumire";
   /** 立绘路径，如 /images/members/viridis.avif */
   image: string;
-  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  /** 立绘hero位置，默认 "50% 0%"，可按成员微调 */
   imagePosition?: string;
-  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  /** 立绘详情页位置，默认 "50% 0%"，可按成员微调 */
   imagePositionDetail?: string;
-  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  /** 移动端立绘hero位置，默认 "50% 0%"，可按成员微调 */
   imagePositionMobileHero?: string;
-  /** next/image object-position，默认 "50% 0%"，可按成员微调 */
+  /** 移动端详情页立绘位置，默认 "50% 0%"，可按成员微调 */
   imagePositionMobileDetail?: string;
   /** B 站主页 UID 直链 */
   bilibili: string;
