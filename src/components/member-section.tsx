@@ -19,7 +19,7 @@ export function MemberSection({ member, index }: MemberSectionProps) {
       aria-labelledby={headingId}
       style={
         {
-          "--art-pos": member.imagePosition ?? "50% 0%",
+          "--art-pos": member.imagePositionDetail ?? member.imagePosition ?? "50% 0%",
           /* 成员色强调均引用主题 token，不硬编码色值 */
           "--member-accent": `var(--mantine-color-${member.colorKey}-6)`,
           "--member-heading": `var(--mantine-color-${member.colorKey}-2)`,
