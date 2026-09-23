@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { HeroWall } from "@/components/hero-wall";
@@ -105,5 +107,30 @@ describe("首屏立绘墙 HeroWall", () => {
       expect(panel.textContent).toContain(members[index].romanName);
     });
     expect(container.querySelectorAll(`.${styles.bar}`)).toHaveLength(4);
+  });
+});
+
+describe("首屏立绘墙 HeroWall 层叠结构（R1 回归防护）", () => {
+  /** 从 CSS 源码取出某条规则的声明体 */
+  function ruleBody(css: string, selector: string): string {
+    return css.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  }
+
+  it("代表色指示条 .bar 显式声明 z-index 且高于覆盖式锚点 .panelLink（不被立绘遮挡）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/hero-wall.module.css"),
+      "utf8",
+    );
+    const barBody = ruleBody(css, "bar");
+    const linkBody = ruleBody(css, "panelLink");
+
+    const barZ = barBody.match(/z-index:\s*(-?\d+)/);
+    expect(barZ, ".bar 规则必须显式声明 z-index").not.toBeNull();
+
+    // .panelLink 未设 z-index 时按 0 计（DOM 顺序分层）
+    const linkZ = linkBody.match(/z-index:\s*(-?\d+)/);
+    expect(Number(barZ![1])).toBeGreaterThan(
+      linkZ ? Number(linkZ[1]) : 0,
+    );
   });
 });

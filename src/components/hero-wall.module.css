@@ -74,6 +74,9 @@
 .bar {
   position: absolute;
   inset: auto 0 0 0;
+  /* 层叠在覆盖式锚点与 meta 之上，恢复一期「代表色指示条恒可见」的视觉；
+     bar 位于底部 4px，与 meta 不重叠 */
+  z-index: 3;
   height: 4px;
   background: var(--member-accent);
 }
