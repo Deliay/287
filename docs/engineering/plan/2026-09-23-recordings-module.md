@@ -142,6 +142,11 @@
   6. MSE 不支持（`isSupported()` false）→ 播放器不初始化并暴露降级状态。
 - 对应验收：AC-5、AC-6。
 - 预计：3.5h（本期最难任务，实现整体移植参考站 `seek.ts` 思路，不自研）。
+- **审核返工修复（2026-09-24 · 次要5）**：
+  - `seekUnbuffered` 返回带原因的 `SeekOutcome`：`invalid / network / stale / range-unsupported / window-oversized / scan-failed / patch-missing`，替代单一 boolean。
+  - 「窗口扫描未命中可信边界 → 按估算偏移降级直试」的成败语义明确：补丁接受即判**成功**（是否真正恢复交给 15s 看门狗兜底），补丁拒绝才判 `patch-missing`；不再固定返回 false 把「已跳转」误报成失败。
+  - `performSeek` 失败文案按原因区分（网络失败 ≠ 上游未支持 Range ≠ 补丁缺失），禁止一律归咎 Range；过期探测（`stale`）静默丢弃、不调用 `onFailed`。
+  - 回归用例（先红后绿）：`tests/recordings-seek.test.ts`「次要5 失败文案区分原因」「次要5 过期 seek 静默丢弃，不上报失败」「次要5 降级直试被补丁拒绝时返回 patch-missing」，并同步更新既有 `seekUnbuffered` 断言为 `outcome.ok/reason`。
 
 ### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx` ✅
 
@@ -167,6 +172,15 @@
   7. 页面卸载 → flv-player 销毁（不进悬浮组件，需求 FR-6 边界）。
 - 对应验收：AC-5、AC-6、AC-7（组装）、AC-9（路由导出）。
 - 预计：3h。
+- **审核返工修复（2026-09-24 · P1–P4 及次要 6/7/8/9，均为先补红测试再最小修复）**：
+  - **P1（AC-6 破坏）**：`seekTo` 内创建看门狗后**登记进 `watchdogRef`** 并以代次 token 保护；续播恢复（`currentTime` 离开 pre-seek 位置或到达目标 ±1s）、失败、新 seek 接管、组件卸载四条路径均可靠 `disarm`，消除「未缓冲 seek 成功恢复后 15s 必然误报超时」。
+  - **P2（AC-5 未实现）**：进度条改为读取 `video.buffered` 渲染「已缓冲」段，另增「已播放」段；三段配色对齐设计 §2.5（轨道 287-7 未加载 / 287-5 已缓冲 / 成员色已播放），进度滑杆 `accent-color` 同步为成员色。
+  - **P3（AC-6 / 设计 §2.5）**：(a) 进度条拖动过程仅更新预览值，松开（pointer/mouse/touch）或键盘抬起才提交 seek，杜绝连发 Range；(b) seek 引入代次 token，过期 seek 的 `onFailed` 与失败收敛分支一律丢弃，最终 seek 成功后不残留错误浮层；(c) `timeupdate` 不再无条件 `setSeeking(false)`，seek 中态（spinner + 进度锁定）由「续播恢复 / 失败 / 看门狗」生命周期收敛。
+  - **P4（技术方案 §5-4 / PRD 非功能）**：事件列表接入 `eventsFor`（当前及相邻 10 分钟窗口）做**窗口化渲染**，长录播累积上万条事件不再全量挂载 DOM。
+  - **次要6/9（T6/T7 联动）**：状态卡片点击经 `reveal-group` 事件展开并定位对应分组（`scrollIntoView` 增加能力判断）；视口触发加载成功后分组 `aria-expanded` 与 ▾ 箭头同步为展开态；新增 `statusKind` 注入，`recording-status` 未就绪时分组显示「等待直播状态加载…」且不取数，就绪后自动补取，避免先渲染「暂无录播」再翻转真实列表。
+  - **次要7**：移动端音量仅保留静音切换（滑杆 PC 显示 / 静音按钮 `< 48em` 显示），可切换静音与恢复原音量；控件栏静止 3s 由 `opacity: 0.25` 改为真正隐藏（`visibility: hidden` + `pointer-events: none`），视频区鼠标移动与触摸均可重现。
+  - **次要8（T5 联动）**：导航加亮改按「路由匹配」判断（首页锚点 `#top` 对应 `/`），首页页下「首页」项正确加亮并带 `aria-current`。
+  - 回归用例（先红后绿）：`tests/recordings-replay-stage.test.tsx`「代码审核返工：P1–P4 与次要项」8 例、`tests/recordings-section.test.tsx` 次要6/9 三例、`tests/site-header.test.tsx` 次要8 一例、`tests/recordings-seek.test.ts` 次要5 三例；全量 `pnpm test` 20 文件 / 122 用例、`pnpm lint`、`tsc --noEmit`、`pnpm build` 全绿。
 
 ### T14 全量验收 ✅
 

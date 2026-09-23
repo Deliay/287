@@ -141,7 +141,9 @@
 }
 
 .controlsHidden {
-  opacity: 0.25;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .controls button,
@@ -169,21 +171,48 @@
   min-width: 80px;
 }
 
+/* 进度条三段（设计文档 §2.5）：轨道 287-7 未加载 / buffered 287-5 已缓冲 / played 成员色已播放 */
+.progressTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  background: var(--mantine-color-night287-7);
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 .buffered {
   position: absolute;
   left: 0;
-  top: 50%;
-  height: 4px;
-  transform: translateY(-50%);
+  top: 0;
+  height: 100%;
   background: var(--mantine-color-night287-5);
-  border-radius: 2px;
-  pointer-events: none;
+}
+
+.played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
 }
 
 .progressWrap input[type="range"] {
   position: relative;
   width: 100%;
-  accent-color: var(--mantine-color-night287-3);
+  background: transparent;
+}
+
+.progressWrap input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.progressWrap input[type="range"]::-moz-range-track {
+  background: transparent;
 }
 
 .time {
@@ -201,6 +230,35 @@
 .volume input[type="range"] {
   width: 72px;
   accent-color: var(--mantine-color-night287-3);
+}
+
+/* 移动端仅静音切换（设计文档 §2.5，次要7）：滑杆仅 PC 显示，静音按钮仅移动端显示 */
+.muteButton {
+  display: none;
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+@media (min-width: 48em) {
+  .volume {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 47.99em) {
+  .volume {
+    display: none;
+  }
+
+  .muteButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 /* 事件列表 */

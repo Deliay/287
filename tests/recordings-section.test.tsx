@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
+import { MantineProvider } from "@mantine/core";
 import { RecordingsSection } from "@/features/recordings/recordings-section";
+import { LiveStatusGrid } from "@/features/recordings/live-status-grid";
 import type { RecordingStatusItem } from "@/features/recordings/types";
+import { theme } from "@/theme";
 import { renderWithTheme } from "./utils";
 
 function jsonResponse(body: unknown) {
@@ -197,4 +200,97 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       `/recordings/replay?roomId=1001&file=${encodeURIComponent(fileName)}`,
     );
   });
+
+  it("次要9 视口触发加载成功后分组转为展开态（aria-expanded / 箭头一致）", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("次要9 recording-status 未就绪时不误判空态（先加载态，就绪后再取数）", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    // 用与 renderWithTheme 相同的包裹层渲染，保证 rerender 不会卸载重建分组（保留已请求状态）
+    const renderTree = (items: RecordingStatusItem[], statusKind: "loading" | "ok") => (
+      <MantineProvider theme={theme}>
+        <RecordingsSection items={items} statusKind={statusKind} />
+      </MantineProvider>
+    );
+    const { rerender } = rtlRender(renderTree([], "loading"));
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await flushMicrotasks();
+    expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
+    expect(screen.getByText(/等待直播状态/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // 状态就绪后自动补取该分组
+    rerender(renderTree(statusItems, "ok"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
+  });
+
+  it("次要6 状态卡片点击（按钮以外区域）展开并定位对应录播分组", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("recording-status")) {
+        return Promise.resolve(jsonResponse({ items: statusItems }));
+      }
+      return Promise.resolve(
+        jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <RecordingsSection items={statusItems} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("live-card-viridis"));
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1][0])).toContain("/api/b/live/1001/recordings");
+    expect(screen.getByText("游玩饥荒")).toBeInTheDocument();
+  });
 });
+
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}

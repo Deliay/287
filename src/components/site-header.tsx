@@ -8,10 +8,10 @@ import { usePathname } from "next/navigation";
 import { getLenis } from "@/lib/lenis";
 import styles from "./site-header.module.css";
 
-/** 导航项：首页（锚点回顶）→ 录播（站内路由），顺序见设计文档 §2.1。 */
+/** 导航项：首页（锚点回顶，对应 `/`）→ 录播（站内路由），顺序与当前页加亮见设计文档 §2.1。 */
 const navItems = [
-  { label: "首页", href: "#top" },
-  { label: "录播", href: "/recordings" },
+  { label: "首页", href: "#top", match: "/" },
+  { label: "录播", href: "/recordings", match: "/recordings" },
 ];
 
 function renderNavLinks(
@@ -21,8 +21,8 @@ function renderNavLinks(
   onNavigate: (event: MouseEvent<HTMLAnchorElement>) => void,
 ): ReactNode {
   return navItems.map((item) => {
-    // 仅精确匹配当前路径的站内路由加亮（# 锚点不参与）
-    const isActive = item.href.startsWith("/") && item.href === pathname;
+    // 当前页加亮按「路由匹配」判断：首页锚点 `#top` 对应 `/`（设计文档 §2.1，审核次要8）
+    const isActive = item.match === pathname;
     const classes = isActive ? `${className} ${activeClass}` : className;
     const navProps = {
       className: classes,

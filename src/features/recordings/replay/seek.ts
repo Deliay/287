@@ -33,6 +33,24 @@ export interface TagBoundary {
 /** 播放器续播回调：返回 `false` 表示未真正生效（补丁缺失 / 结构不符），需显性失败。 */
 export type ApplySeek = (fileposition: number, milliseconds: number) => boolean | void;
 
+/**
+ * 未缓冲 seek 的失败原因（供上层区分文案；`stale` 表示被后发起的 seek 取代，应静默丢弃）。
+ */
+export type SeekFailureReason =
+  | "invalid"
+  | "network"
+  | "stale"
+  | "range-unsupported"
+  | "window-oversized"
+  | "scan-failed"
+  | "patch-missing";
+
+/** 未缓冲 seek 结果：失败时携带原因；成功时 `reason` 缺省。 */
+export interface SeekOutcome {
+  ok: boolean;
+  reason?: SeekFailureReason;
+}
+
 /** 由文件大小与总时长线性估算目标时间的字节偏移（纯函数，非法输入返回 0，钳制到 `[0, fileSize-1]`）。 */
 export function estimateByteOffset(targetMs: number, durationMs: number, fileSize: number): number {
   if (!Number.isFinite(targetMs) || !Number.isFinite(durationMs) || !Number.isFinite(fileSize)) return 0;
@@ -186,16 +204,17 @@ async function defaultApplySeek(fileposition: number, milliseconds: number): Pro
 
 /**
  * 未缓冲 seek 编排：估算 → Range 窗口探测（流式扫描）→ 视频关键帧对齐 → 补丁续播。
- * 仅在 `206 Partial Content` 且窗口读取在上限内时继续；任何失败路径显性返回 false，不抛错、不静默冻结。
+ * 仅在 `206 Partial Content` 且窗口读取在上限内时继续；任何失败路径返回带原因的
+ * `SeekOutcome`（`stale` 为被取代的过期探测，调用方须静默丢弃），不抛错、不静默冻结。
  */
-export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<boolean> {
+export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutcome> {
   const { url, targetSeconds, durationSeconds, fileSize } = args;
   const applySeek = args.seekToByteOffset ?? ((f: number, ms: number) => defaultApplySeek(f, ms));
   const fetchFn = args.fetchFn ?? ((...input: Parameters<typeof fetch>) => fetch(...input));
   const generation = ++seekGeneration;
 
-  if (!Number.isFinite(targetSeconds) || !Number.isFinite(durationSeconds)) return false;
-  if (durationSeconds <= 0 || fileSize <= 0) return false;
+  if (!Number.isFinite(targetSeconds) || !Number.isFinite(durationSeconds)) return { ok: false, reason: "invalid" };
+  if (durationSeconds <= 0 || fileSize <= 0) return { ok: false, reason: "invalid" };
 
   const targetMs = Math.min(Math.max(targetSeconds, 0), durationSeconds) * 1000;
   const estimated = estimateByteOffset(targetMs, durationSeconds * 1000, fileSize);
@@ -208,16 +227,17 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<boolean>
     });
   } catch (error) {
     console.error("[recordings] seek: Range 窗口请求失败", error);
-    return false;
+    return { ok: false, reason: "network" };
   }
+  // 被后发起的 seek 取代：静默丢弃（调用方不得据此报错）
   if (generation !== seekGeneration) {
     await cancelBody(response);
-    return false;
+    return { ok: false, reason: "stale" };
   }
   if (response.status !== 206) {
     console.error(`[recordings] seek: 上游未返回 206（实际 ${response.status}），放弃未缓冲 seek`);
     await cancelBody(response);
-    return false;
+    return { ok: false, reason: "range-unsupported" };
   }
 
   // 解析 Content-Range 校正起始偏移（缺失回退估算值）
@@ -231,7 +251,7 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<boolean>
       if (Number.isFinite(end) && end - baseOffset + 1 > MAX_WINDOW_READ_BYTES) {
         console.error("[recordings] seek: Content-Range 超出窗口读取上限，放弃");
         await cancelBody(response);
-        return false;
+        return { ok: false, reason: "window-oversized" };
       }
     }
   }
@@ -239,15 +259,15 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<boolean>
   if (Number.isFinite(contentLength) && contentLength > MAX_WINDOW_READ_BYTES) {
     console.error("[recordings] seek: Content-Length 超出窗口读取上限，放弃");
     await cancelBody(response);
-    return false;
+    return { ok: false, reason: "window-oversized" };
   }
 
   const scanResult = await readAndScanSeekWindow(response, baseOffset, scanBytes);
   if (!scanResult) {
     console.error("[recordings] seek: 窗口读取失败或超上限");
-    return false;
+    return { ok: false, reason: "scan-failed" };
   }
-  if (generation !== seekGeneration) return false;
+  if (generation !== seekGeneration) return { ok: false, reason: "stale" };
 
   const boundary = scanResult.keyframe ?? scanResult.fallback;
   if (boundary) {
@@ -255,25 +275,29 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<boolean>
       const applied = await applySeek(boundary.fileposition, boundary.milliseconds);
       if (applied === false) {
         console.error("[recordings] seek: patched seekToByteOffset 未生效（补丁缺失或结构不符）");
-        return false;
+        return { ok: false, reason: "patch-missing" };
       }
-      return true;
+      return { ok: true };
     } catch (error) {
       console.error("[recordings] seek: patched seekToByteOffset 调用异常", error);
-      return false;
+      return { ok: false, reason: "patch-missing" };
     }
   }
 
-  // 扫描失败：降级为从估算偏移直接尝试（可能 demux 失败，由既有错误提示兜底）
+  // 扫描未命中可信边界：降级按估算偏移直试。补丁接受即视为**发起成功**（实际是否恢复
+  // 由上层看门狗兜底），补丁拒绝才判定失败——绝不把「已跳转」误报成失败（审核次要5）。
   console.error("[recordings] seek: 窗口内未找到可信 tag 边界，降级为估算偏移直试");
   try {
     const applied = await applySeek(estimated, targetMs);
-    if (applied === false) return false;
+    if (applied === false) {
+      console.error("[recordings] seek: 降级直试被补丁拒绝");
+      return { ok: false, reason: "patch-missing" };
+    }
+    return { ok: true };
   } catch (error) {
     console.error("[recordings] seek: 降级直试异常", error);
-    return false;
+    return { ok: false, reason: "patch-missing" };
   }
-  return false;
 }
 
 /** 媒体元素缓冲区快照的最小依赖（便于测试注入）。 */
@@ -337,16 +361,26 @@ export interface PerformSeekArgs {
   watchdog?: SeekWatchdog;
 }
 
+/** 失败原因 → 面向用户的文案（区分真实原因，禁止一律归咎 Range，审核次要5）。 */
+const SEEK_FAILURE_MESSAGES: Record<Exclude<SeekFailureReason, "stale">, string> = {
+  invalid: "seek 失败：播放器未就绪或参数无效",
+  network: "seek 失败：Range 窗口请求失败（网络错误）",
+  "range-unsupported": "seek 失败：上游未支持 Range 请求",
+  "window-oversized": "seek 失败：探测窗口超出读取上限",
+  "scan-failed": "seek 失败：窗口扫描失败（读取中断或超限）",
+  "patch-missing": "seek 失败：mpegts 字节偏移补丁未生效",
+};
+
 /**
  * seek 统一入口（技术方案 §3.3 五步）：
  * 1. 已缓冲 → 直接 `currentTime`（不发 Range）；
  * 2. 未缓冲 → `seekUnbuffered` 字节偏移续播，成功后武装 15s 看门狗；
- * 3. 任何失败路径调用 `onFailed` 显性上报。
+ * 3. 失败按原因上报 `onFailed`；`stale`（被后发起的 seek 取代）静默丢弃，不误报。
  */
 export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
   const { video, targetSeconds, durationSeconds, fileSize, url, onFailed } = args;
   if (!video || !Number.isFinite(targetSeconds)) {
-    onFailed("seek 失败：播放器未就绪");
+    onFailed(SEEK_FAILURE_MESSAGES.invalid);
     return false;
   }
 
@@ -356,7 +390,7 @@ export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
   }
 
   args.onSeeking?.();
-  const ok = await seekUnbuffered({
+  const outcome = await seekUnbuffered({
     url,
     targetSeconds,
     durationSeconds,
@@ -365,8 +399,11 @@ export async function performSeek(args: PerformSeekArgs): Promise<boolean> {
     ...(args.fetchFn ? { fetchFn: args.fetchFn } : {}),
   });
 
-  if (!ok) {
-    onFailed("seek 失败：无法跳转到该时间点（上游未支持 Range 请求）");
+  if (!outcome.ok) {
+    // 过期 seek：静默丢弃，不得污染最终 seek 的 UI 状态（审核 P3-b）
+    if (outcome.reason !== "stale") {
+      onFailed(SEEK_FAILURE_MESSAGES[outcome.reason ?? "invalid"]);
+    }
     return false;
   }
 

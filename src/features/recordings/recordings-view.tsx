@@ -24,7 +24,10 @@ export function RecordingsView() {
           <p className={styles.subtitle}>四位成员的直播状态与历史录播回看。</p>
         </header>
         <LiveStatusGrid controller={controller} />
-        <RecordingsSection items={controller.state.items} />
+        <RecordingsSection
+          items={controller.state.items}
+          statusKind={controller.state.kind}
+        />
       </main>
     </>
   );

@@ -67,6 +67,16 @@ describe("导航栏 SiteHeader（T5 / AC-1）", () => {
     expect(home).not.toHaveAttribute("data-active", "true");
   });
 
+  it("当前页导航项加亮：pathname=/ 时「首页」项带加亮标记（次要8）", () => {
+    renderHeader("/");
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const home = within(nav).getByRole("link", { name: "首页" });
+    expect(home).toHaveAttribute("aria-current", "page");
+    expect(home).toHaveAttribute("data-active", "true");
+    const recordings = within(nav).getByRole("link", { name: "录播" });
+    expect(recordings).not.toHaveAttribute("data-active", "true");
+  });
+
   it("点击「首页」回到页面顶部：lenis 可用时走 lenis.scrollTo(0)", async () => {
     const user = userEvent.setup();
     const scrollTo = vi.fn();

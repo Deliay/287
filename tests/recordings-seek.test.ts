@@ -129,7 +129,7 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
     vi.stubGlobal("fetch", fetchMock);
     const seekToByteOffset = vi.fn();
 
-    const ok = await seekUnbuffered({
+    const outcome = await seekUnbuffered({
       url: "https://rec.example.com/a.flv",
       targetSeconds: 60,
       durationSeconds: 120,
@@ -137,7 +137,7 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
       seekToByteOffset,
     });
 
-    expect(ok).toBe(true);
+    expect(outcome.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] as [string, { headers: { Range: string } }];
     expect(init.headers.Range).toBe(`bytes=500000-${500000 + SEEK_WINDOW_BYTES - 1}`);
@@ -158,14 +158,15 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
       }),
     );
     const seekToByteOffset = vi.fn();
-    const ok = await seekUnbuffered({
+    const outcome = await seekUnbuffered({
       url: "https://rec.example.com/a.flv",
       targetSeconds: 10,
       durationSeconds: 120,
       fileSize: 1_000_000,
       seekToByteOffset,
     });
-    expect(ok).toBe(false);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe("range-unsupported");
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(arrayBuffer).not.toHaveBeenCalled();
     expect(seekToByteOffset).not.toHaveBeenCalled();
@@ -192,17 +193,35 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
       }),
     );
     const seekToByteOffset = vi.fn();
-    const ok = await seekUnbuffered({
+    const outcome = await seekUnbuffered({
       url: "https://rec.example.com/a.flv",
       targetSeconds: 10,
       durationSeconds: 120,
       fileSize: 1_000_000,
       seekToByteOffset,
     });
-    expect(ok).toBe(false);
+    // 窗口内无可信边界 → 降级按估算偏移直试；补丁接受即视为发起成功（由看门狗兜底未恢复）
+    expect(outcome.ok).toBe(true);
     expect(cancel).toHaveBeenCalled();
-    // 降级直试（估算偏移）也失败 → 最终返回 false
-    expect(seekToByteOffset).toHaveBeenCalled();
+    expect(seekToByteOffset).toHaveBeenCalledWith(83_333, 10_000);
+  });
+
+  it("次要5 降级直试被补丁拒绝时返回 patch-missing（而非固定失败）", async () => {
+    const noise = new Uint8Array(4096);
+    noise.fill(0x02);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(windowResponse(noise)),
+    );
+    const outcome = await seekUnbuffered({
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 30,
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: () => false,
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe("patch-missing");
   });
 });
 
@@ -275,8 +294,7 @@ describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T1
     expect(onFailed.mock.calls[0][0]).toContain("seek");
   });
 
-  it("seek 后 15s 未恢复播放 → 看门狗超时显性报错", async () => {
-    vi.useFakeTimers();
+  it("seek 后 15s 未恢复播放 → 看门狗超时显性报错", async () => {    vi.useFakeTimers();
     const window = concat(new Uint8Array([0, 0, 0]), buildTag(9, 30, 60_000, 0x10));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(windowResponse(window)));
     const onFailed = vi.fn();
@@ -305,6 +323,93 @@ describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T1
     watchdog.disarm();
     vi.advanceTimersByTime(SEEK_WATCHDOG_MS * 2);
     expect(onFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("次要5 失败文案区分原因：网络失败 ≠ 未支持 Range", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("network down")));
+    const networkFailed = vi.fn();
+    const networkOk = await performSeek({
+      video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 90,
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: vi.fn(),
+      onFailed: networkFailed,
+    });
+    expect(networkOk).toBe(false);
+    expect(networkFailed).toHaveBeenCalledTimes(1);
+    expect(networkFailed.mock.calls[0][0]).toContain("网络");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: { cancel: async () => {} },
+      }),
+    );
+    const rangeFailed = vi.fn();
+    const rangeOk = await performSeek({
+      video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 90,
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: vi.fn(),
+      onFailed: rangeFailed,
+    });
+    expect(rangeOk).toBe(false);
+    expect(rangeFailed.mock.calls[0][0]).toContain("Range");
+    expect(rangeFailed.mock.calls[0][0]).not.toContain("网络");
+  });
+
+  it("次要5 过期 seek（被后发起的 seek 取代）静默丢弃，不上报失败", async () => {
+    const makeWindow = (timestamp: number) =>
+      concat(new Uint8Array([0, 0, 0]), buildTag(9, 30, timestamp, 0x10));
+    // 挂起的首个 Range 响应：由对象持有以便在断言前释放（闭包内赋值，避免 TS 收窄成 never）
+    const holder: { release: (() => void) | null } = { release: null };
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            holder.release = () => resolve(windowResponse(makeWindow(1_000)));
+          }),
+      )
+      .mockImplementationOnce(() => Promise.resolve(windowResponse(makeWindow(90_000))));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const staleFailed = vi.fn();
+    const freshFailed = vi.fn();
+    const first = performSeek({
+      video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 90, // 未缓冲 → 走 Range 探测（挂起）
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: vi.fn(),
+      onFailed: staleFailed,
+    });
+    const second = performSeek({
+      video: makeVideo({ currentTime: 5, ranges: [[0, 60]] }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 110, // 未缓冲 → 后发起者取代前者
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset: vi.fn(),
+      onFailed: freshFailed,
+    });
+
+    const secondOk = await second;
+    expect(secondOk).toBe(true);
+    holder.release?.();
+    const firstOk = await first;
+
+    expect(firstOk).toBe(false);
+    expect(staleFailed).not.toHaveBeenCalled();
+    expect(freshFailed).not.toHaveBeenCalled();
   });
 
   it("isTimeBuffered 判定缓冲区间（含边界）", () => {

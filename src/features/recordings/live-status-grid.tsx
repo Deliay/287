@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore, type MouseEvent
 import { members, type Member } from "@/data/members";
 import { fetchRecordingStatus } from "./api";
 import type { RecordingStatusItem } from "./types";
+import { dispatchRevealGroup } from "./reveal-group";
 import { audioRegistry, type AudioLane } from "./live-audio/audio-player-registry";
 import styles from "./live-status-grid.module.css";
 
@@ -128,11 +129,14 @@ function MemberCard({ member, item, lane }: MemberCardProps) {
   const recording = item?.state === "recording";
 
   const handleCardClick = (event: MouseEvent<HTMLElement>) => {
-    // 按钮/链接点击不触发滚动定位
+    // 按钮/链接点击不触发定位展开
     if ((event.target as HTMLElement).closest("button, a")) return;
-    document
-      .getElementById(`recordings-group-${member.id}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // 展开对应录播分组（设计文档 §2.3，审核次要6）
+    dispatchRevealGroup(member.id);
+    const target = document.getElementById(`recordings-group-${member.id}`);
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   };
 
   return (

@@ -89,8 +89,14 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const listRef = useRef<HTMLDivElement>(null);
   const programmaticScrollRef = useRef(false);
   const lastWindowRef = useRef(-1);
+  /** 当前 seek 的看门狗：seekTo 内登记，续播/失败/卸载路径解除（审核 P1） */
   const watchdogRef = useRef<SeekWatchdog | null>(null);
+  /** seek 代次：过期 seek 的回调一律丢弃（审核 P3-b） */
+  const seekTokenRef = useRef(0);
+  /** 最近一次 seek 目标（重试按钮用） */
   const lastSeekRef = useRef<number | null>(null);
+  /** 续播判定上下文：从 pre-seek 位置到 target 的移动视为恢复 */
+  const seekResumeRef = useRef<{ token: number; from: number | null; target: number } | null>(null);
 
   const url = recordingFileUrl(roomId, file.name);
   const recordStartMs = bounds.startMs;
@@ -104,9 +110,15 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [failed, setFailed] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(boundsDuration);
+  /** 已缓冲区间末端（秒）：来自 `video.buffered`，进度条「已缓冲」段用（审核 P2） */
+  const [bufferedEnd, setBufferedEnd] = useState(0);
   const [seeking, setSeeking] = useState(false);
   const [seekError, setSeekError] = useState<string | null>(null);
+  /** 进度条拖动预览值：松开才真正 seek（审核 P3-a） */
+  const [draftTime, setDraftTime] = useState<number | null>(null);
   const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
+  const volumeBeforeMuteRef = useRef(1);
   const [rate, setRate] = useState(1);
   const [danmakuEnabled, setDanmakuEnabled] = useState(true);
   const [controlsIdle, setControlsIdle] = useState(false);
@@ -118,7 +130,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const detectSupport = deps.isPlaybackSupported ?? defaultIsPlaybackSupported;
   const performSeekFn = deps.performSeek ?? defaultPerformSeek;
 
-  const { events, loading, error, focusWindow, prefetchNext, retry } = useReplayEvents(
+  const { events, eventsFor, loading, error, focusWindow, prefetchNext, retry } = useReplayEvents(
     roomId,
     { startMs: recordStartMs, endMs: bounds.endMs },
     deps.fetchEvents,
@@ -130,10 +142,19 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   );
   const title = file.info?.title?.trim() || file.name;
 
+  // 窗口化渲染（技术方案 §5-4 风险缓解 / 审核 P4）：
+  // 仅取「当前及相邻窗口」的事件，长录播累积上万条也不全量挂载 DOM。
+  const windowedEvents = useMemo(
+    () => eventsFor(currentTime * 1000),
+    // events 进入依赖：窗口取数源自 store 内部快照，快照（events）变更后需按新窗口重算
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventsFor, events, currentTime],
+  );
+
   const entries = useMemo<TimelineEntry[]>(() => {
     if (!Number.isFinite(recordStartMs)) return [];
     const mapped: TimelineEntry[] = [];
-    for (const event of events) {
+    for (const event of windowedEvents) {
       const offset = Date.parse(event.occurredAt) - recordStartMs;
       if (!Number.isFinite(offset)) continue;
       mapped.push({
@@ -147,7 +168,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     }
     mapped.sort((a, b) => a.offsetSeconds - b.offsetSeconds);
     return mapped;
-  }, [events, recordStartMs]);
+  }, [windowedEvents, recordStartMs]);
 
   const currentIndex = useMemo(() => {
     let index = -1;
@@ -212,14 +233,33 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           return mediaDuration;
         });
       }
-      // 续播实际发生 → 解除 seek 看门狗
-      if (watchdogRef.current && lastSeekRef.current !== null && media.currentTime !== lastSeekRef.current) {
-        watchdogRef.current.disarm();
-        watchdogRef.current = null;
+      // 已缓冲区间末端（进度条「已缓冲」段，审核 P2）
+      let bufferedTo = 0;
+      try {
+        const ranges = media.buffered;
+        for (let index = 0; index < (ranges?.length ?? 0); index += 1) {
+          bufferedTo = Math.max(bufferedTo, ranges.end(index));
+        }
+      } catch {
+        // buffered 不可用：保持 0
       }
-      if (seeking) setSeeking(false);
+      setBufferedEnd(bufferedTo);
+
+      // 续播恢复判定：currentTime 离开 pre-seek 位置或到达目标 → 解除看门狗（审核 P1）
+      const resume = seekResumeRef.current;
+      if (watchdogRef.current && resume && resume.token === seekTokenRef.current) {
+        const moved = resume.from !== null && media.currentTime !== resume.from;
+        const reached = Math.abs(media.currentTime - resume.target) <= 1;
+        if (moved || reached) {
+          watchdogRef.current.disarm();
+          watchdogRef.current = null;
+          seekResumeRef.current = null;
+          setSeeking(false);
+        }
+      }
+      // 注意：不在这里无条件 setSeeking(false)——seek 中态由 seek 生命周期收敛（审核 P3-c）
     },
-    [file.size, seeking],
+    [file.size],
   );
 
   // 播放推进：切换关注窗口 + 过半预取下一窗
@@ -249,34 +289,69 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     else window.setTimeout(release, 0);
   }, [following, currentIndex]);
 
+  /** 进度条预览值（ref 作为提交幂等的真源：pointerup + mouseup 双事件只提交一次） */
+  const draftRef = useRef<number | null>(null);
+
   const seekTo = useCallback(
     (offsetSeconds: number) => {
       if (!Number.isFinite(offsetSeconds) || offsetSeconds < 0) return;
+      draftRef.current = null;
+      setDraftTime(null);
+      const token = ++seekTokenRef.current;
+      // 新 seek 接管：先解除上一轮看门狗，避免过期超时误报（审核 P1）
+      watchdogRef.current?.disarm();
+      watchdogRef.current = null;
       lastSeekRef.current = offsetSeconds;
       setSeekError(null);
       setSeeking(true);
       const media = videoRef.current;
+      seekResumeRef.current = { token, from: media ? media.currentTime : null, target: offsetSeconds };
+
+      const watchdog = new SeekWatchdog(() => {
+        if (seekTokenRef.current !== token) return;
+        watchdogRef.current = null;
+        seekResumeRef.current = null;
+        setSeeking(false);
+        setSeekError("seek 超时：15 秒内未恢复播放");
+      });
+      // 登记进 watchdogRef：续播/卸载路径据此可靠解除（审核 P1）
+      watchdogRef.current = watchdog;
+
       void performSeekFn({
         video: media,
         url,
         targetSeconds: offsetSeconds,
         durationSeconds: duration,
         fileSize: file.size,
-        onSeeking: () => setSeeking(true),
+        onSeeking: () => {
+          if (seekTokenRef.current !== token) return;
+          setSeeking(true);
+        },
         onFailed: (reason) => {
+          // 过期 seek 的失败一律丢弃，不得覆盖最终 seek 的状态（审核 P3-b）
+          if (seekTokenRef.current !== token) return;
+          watchdog.disarm();
+          if (watchdogRef.current === watchdog) watchdogRef.current = null;
           setSeeking(false);
           setSeekError(reason);
         },
-        watchdog: new SeekWatchdog(() => {
-          setSeeking(false);
-          setSeekError("seek 超时：15 秒内未恢复播放");
-        }),
+        watchdog,
       }).then((ok) => {
+        if (seekTokenRef.current !== token) return;
         if (ok) {
-          setSeeking(false);
+          // 成功分支：已缓冲路径会同步落位 → 立即收敛；
+          // 未缓冲路径保持 seek 中态，直到续播恢复 / 失败 / 看门狗（审核 P3-c）
+          const media2 = videoRef.current;
+          if (media2 && Math.abs(media2.currentTime - offsetSeconds) <= 1) {
+            watchdog.disarm();
+            if (watchdogRef.current === watchdog) watchdogRef.current = null;
+            setSeeking(false);
+          }
           return;
         }
-        // performSeek 返回 false 但未回调 onFailed 时兜底显性报错
+        // performSeek 返回 false 但未回调 onFailed 时兜底显性报错（同样受代次保护）
+        watchdog.disarm();
+        if (watchdogRef.current === watchdog) watchdogRef.current = null;
         setSeeking(false);
         setSeekError((previous) => previous ?? "seek 失败：无法跳转到该时间点");
       });
@@ -289,6 +364,15 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     },
     [url, duration, file.size, performSeekFn, recordStartMs, focusWindow],
   );
+
+  /** 进度条松开/键盘抬起才提交 seek（设计 §2.5「拖动松开后开始 seek」，审核 P3-a） */
+  const commitDraft = useCallback(() => {
+    const value = draftRef.current;
+    if (value === null) return;
+    draftRef.current = null;
+    setDraftTime(null);
+    if (Math.abs(value - currentTime) > 0.05) seekTo(value);
+  }, [currentTime, seekTo]);
 
   const handleListScroll = useCallback(() => {
     if (programmaticScrollRef.current) return;
@@ -306,6 +390,12 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const resumeFollowing = useCallback(() => {
     setFollowing(true);
   }, []);
+
+  /** 重现控件栏（移动鼠标 / 触摸，次要7） */
+  const revealControls = useCallback(() => {
+    if (controlsIdle) setControlsIdle(false);
+    setControlsActivity((value) => value + 1);
+  }, [controlsIdle]);
 
   const togglePlay = () => {
     if (playing) {
@@ -348,7 +438,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       </header>
 
       <div className={styles.layout}>
-        <div className={styles.videoColumn} ref={containerRef}>
+        <div
+          className={styles.videoColumn}
+          ref={containerRef}
+          data-testid="video-column"
+          onMouseMove={revealControls}
+          onTouchStart={revealControls}
+        >
           {supported === false ? (
             <div className={styles.degrade} role="alert" data-testid="mse-degrade">
               当前浏览器无法播放，请使用最新版 Chrome / Edge / Safari
@@ -404,10 +500,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           {supported !== false && (
             <div
               className={playing && controlsIdle ? styles.controlsHidden : styles.controls}
-              onMouseMove={() => {
-                if (controlsIdle) setControlsIdle(false);
-                setControlsActivity((value) => value + 1);
-              }}
+              data-controls={playing && controlsIdle ? "hidden" : "visible"}
+              onMouseMove={revealControls}
               role="group"
               aria-label="播放控件"
             >
@@ -416,23 +510,67 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               </button>
 
               <div className={styles.progressWrap}>
-                <div
-                  className={styles.buffered}
-                  aria-hidden="true"
-                  data-testid="buffered-bar"
-                  style={{
-                    width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
-                  }}
-                />
+                {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5 / 已播放 成员色 */}
+                <div className={styles.progressTrack} aria-hidden="true">
+                  <div
+                    className={styles.buffered}
+                    data-testid="buffered-bar"
+                    style={{
+                      width: duration > 0 ? `${Math.min(100, (bufferedEnd / duration) * 100)}%` : "0%",
+                    }}
+                  />
+                  <div
+                    className={styles.played}
+                    data-testid="played-bar"
+                    style={{
+                      width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
+                      backgroundColor: member
+                        ? `var(--mantine-color-${member.colorKey}-6)`
+                        : "var(--mantine-color-night287-4)",
+                    }}
+                  />
+                </div>
                 <input
                   type="range"
                   aria-label="播放进度"
                   min={0}
                   max={duration > 0 ? duration : 0}
                   step={0.1}
-                  value={Math.min(currentTime, duration > 0 ? duration : currentTime)}
+                  value={Math.min(
+                    draftTime ?? currentTime,
+                    duration > 0 ? duration : currentTime,
+                  )}
                   disabled={seeking || duration <= 0}
-                  onChange={(event) => seekTo(Number(event.target.value))}
+                  style={{
+                    accentColor: member
+                      ? `var(--mantine-color-${member.colorKey}-6)`
+                      : "var(--mantine-color-night287-4)",
+                  }}
+                  // 拖动中仅更新预览；松开（pointer/mouse/touch）或键盘抬起才提交 seek（审核 P3-a）
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    draftRef.current = next;
+                    setDraftTime(next);
+                  }}
+                  onPointerUp={commitDraft}
+                  onMouseUp={commitDraft}
+                  onTouchEnd={commitDraft}
+                  onKeyUp={(event) => {
+                    if (
+                      [
+                        "ArrowLeft",
+                        "ArrowRight",
+                        "ArrowUp",
+                        "ArrowDown",
+                        "Home",
+                        "End",
+                        "PageUp",
+                        "PageDown",
+                      ].includes(event.key)
+                    ) {
+                      commitDraft();
+                    }
+                  }}
                 />
               </div>
               <span className={styles.time} aria-label="播放时间">
@@ -451,10 +589,32 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                   onChange={(event) => {
                     const next = Number(event.target.value);
                     setVolume(next);
+                    if (next > 0) setMuted(false);
                     if (videoRef.current) videoRef.current.volume = next;
                   }}
                 />
               </label>
+              {/* 移动端仅静音切换（设计 §2.5，次要7）：CSS 控制滑杆/按钮的显隐 */}
+              <button
+                type="button"
+                className={styles.muteButton}
+                aria-label={muted ? "取消静音" : "静音"}
+                onClick={() => {
+                  if (muted) {
+                    const restored = volumeBeforeMuteRef.current;
+                    setVolume(restored);
+                    setMuted(false);
+                    if (videoRef.current) videoRef.current.volume = restored;
+                  } else {
+                    volumeBeforeMuteRef.current = volume;
+                    setVolume(0);
+                    setMuted(true);
+                    if (videoRef.current) videoRef.current.volume = 0;
+                  }
+                }}
+              >
+                {muted ? "🔇" : "🔊"}
+              </button>
 
               <select aria-label="倍速" value={rate} onChange={handleRateChange}>
                 {PLAYBACK_RATES.map((value) => (
