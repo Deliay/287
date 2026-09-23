@@ -53,10 +53,12 @@
   pointer-events: none;
 }
 
-/* 徽章槽单独恢复指针事件，保证开播徽章可点、且不会被面板锚点抢走点击 */
+/* 徽章槽与 meta 同为不接管命中：命中链 .badge(none)/.badgeSlot(none)/.meta(none)
+   整条穿透到下方覆盖式锚点，非交互态徽章不产生点击死区（R4）；
+   开播徽章由 live-badge 的 .living 显式 auto 成为命中目标（祖先 none 不阻止子树显式 auto） */
 .badgeSlot {
   align-self: flex-start;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .name {

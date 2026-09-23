@@ -144,4 +144,18 @@ describe("首屏立绘墙 HeroWall 层叠结构（R1 回归防护）", () => {
     // .bar 层叠在覆盖式锚点之上：必须关闭指针事件让点击穿透到 a.panelLink
     expect(barBody).toMatch(/pointer-events:\s*none/);
   });
+
+  it("徽章槽 .badgeSlot 不接管命中测试（R4 回归防护：非交互态徽章点击穿透到面板锚点）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/hero-wall.module.css"),
+      "utf8",
+    );
+    const slotBody = ruleBody(css, "badgeSlot");
+
+    // .badgeSlot 整矩形覆盖徽章且位于 meta(z2) 子树：若为 auto 会吞掉
+    // 非交互态徽章（computed none 但 paint 序更上层可命中）的点击；
+    // 命中链须整条为 none，仅 live-badge 的 .living 显式恢复 auto
+    expect(slotBody).toMatch(/pointer-events:\s*none/);
+    expect(slotBody).not.toMatch(/pointer-events:\s*auto/);
+  });
 });

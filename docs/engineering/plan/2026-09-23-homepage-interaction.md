@@ -201,3 +201,22 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 问题 | 处置 | 用例 |
 |------|------|------|
 | R3 徽章槽 `pointer-events: auto` 作用于槽内**全部状态**：未开播 `span.offline` 与加载骨架 `span.skeleton` 非链接，点击命中后被吞掉（`closest("a")` 为 null 放行、span 无默认行为），徽章盒成为面板内点击死区；未开播是常态，影响大于 R2 的 4px 条带。与 R2 同源（pointer-events 分层边界遗漏），违反技术方案 §4.3 | 采用建议 a 的语义化写法：`live-badge.module.css` 基础规则 `.badge` 设 `pointer-events: none`，仅交互态 `.living` 恢复 `pointer-events: auto`——「仅交互态接管点击」；开播徽章在 `.badgeSlot` 的 auto 之下依旧可点（AC-3 不变），非交互态穿透到下方 `a.panelLink`（首屏）/ section 背景（介绍区，无行为差异）。不与方案 b 叠加 | `live-badge.test.tsx` 新增 CSS 结构断言：`.badge` 须含 `pointer-events: none`、`.living` 须含 `pointer-events: auto`、`.skeleton`/`.offline` 不得回设 auto（先红后绿） |
+
+### 返工记录（第五轮，2026-09-23，Review R4）
+
+> **Review 更正**：第四轮「方案 a 与 b 效果等价」的判断**有误**——`pointer-events: none` 只让徽章**自身**退出命中测试，事件会落到该点位 paint 序更上层且可命中的盒子；本轮以无头 Chromium `document.elementFromPoint`（浏览器为点击事件选定目标的判定原语）实证：`.badgeSlot`（`pointer-events: auto`，位于 meta 的 z2 子树、整矩形覆盖徽章）恰好吞掉点击，故 a 单独使用无效。**只有让「徽章 → 锚点」整条命中链上除开播链接外全部 `none` 才成立。**
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R4（R3 修复无效）：拦截者从徽章 span 转移到包装 span `.badgeSlot`——`.badge(none)` 后点击命中 paint 序更上层的 `.badgeSlot(auto)`，`closest("a")` 仍为 null，徽章盒 ≈56×25px 死区依旧存在（真实构建 + A/B 复现页双组实证） | 采用指定最小修复：`hero-wall.module.css` 的 `.badgeSlot` 改 `pointer-events: none`（保留 `align-self: flex-start`）。开播徽章可点性由 `live-badge.module.css` 的 `.living{auto}` 显式保证（**祖先 `none` 不阻止子树显式 `auto` 成为命中目标**，B 组已实证），AC-3 与 T5「可交互徽章可点」意图不受影响；改后命中链 `.badge(none)/.badgeSlot(none)/.meta(none)` → 穿透到 `a.panelLink`（或其立绘子元素）。**`.badge`/`.living` 声明保留不动**（语义正确且必要），未叠加其他文件改动 | 扩展 `hero-wall.test.tsx`「层叠结构」用例：`.badgeSlot` 规则须含 `pointer-events: none` 且不得含 `pointer-events: auto`（既有 `.bar` 与 live-badge 四条断言保留） |
+
+**结构断言的诚实边界与一次性实证记录（已执行留档）**：`readFileSync` + 正则断言只约束声明、不验证命中路由（jsdom 不做命中测试）。真实路由以 `elementFromPoint` 人工验证，方法：无头 Chromium（Playwright 1.63 + chromium-1234）静态服务本仓库 `out/` 构建产物（viewport 1280×800，≥48em PC 断点），对徽章盒中心坐标取 `document.elementFromPoint(x, y)`，并配合真实 `page.mouse.click` 探针（document 冒泡监听，hydration 后注册以观察 smooth-scroll 的 `preventDefault`）。**2026-09-23 实测结果（13/13 通过）**：
+
+| 场景 | 取样点 | 命中目标 | 结论 |
+|------|--------|----------|------|
+| 状态 A 未开播（route abort 降级） | 徽章盒中心（56×18px，badge/slot/meta 的 computed `pointer-events` 均为 `none`） | `IMG.hero-wall-module__art`，`closest("a")` = `#member-viridis` | ✅ 死区消除，命中面板锚点子树 |
+| 状态 A + 真实鼠标点击同点位 | — | 探针：`anchor=#member-viridis`、`defaultPrevented=true`、点击后 `scrollY 0→794` 且 `location.hash=""` | ✅ 被 lenis 拦截并实际滚动到介绍区（非死区、非原生 hash 跳转） |
+| 状态 A | `.bar` 条带中心 / 成员名字中心 | 均 `closest("a")` = `#member-viridis` | ✅ R1/R2 复验通过 |
+| 状态 B 开播（route fulfill `live:true`） | 徽章盒中心（badge computed `pointer-events=auto`，slot=`none`） | `A.live-badge-module__…__living` 自身，`href=https://space.bilibili.com/1891335475` | ✅ AC-3 徽章链接仍为命中目标（祖先 `none` 不阻止子孙显式 `auto`） |
+
+复跑方法：`python3 -m http.server 8123 --directory out` + `/tmp/opencode/verify-hit.cjs`（Playwright 脚本，含状态 A/B 双路由与点击探针）。
