@@ -18,7 +18,7 @@
 - 安装运行时依赖 `mpegts.js`（`^1.8`，锁定精确版本）。
 - 用 `gh api repos/Deliay/sumire/contents/patches` 获取参考站 `patches/mpegts.js@1.8.2.patch`，移植为 `patches/mpegts.js@<锁定版本>.patch`（暴露 `seekToByteOffset` / `setBufferLimits`，见技术方案 §3.3）。
 - 在 `pnpm-workspace.yaml` 配置 `patchedDependencies`（pnpm 11 已将该配置从 `package.json` 迁至 workspace 文件），执行 `pnpm install` 确认补丁应用成功（`pnpm patch-commit` 流程或直接落补丁文件）。
-- 验证：写一个临时测试 import mpegts.js 并断言补丁方法存在于原型上，跑通后删除临时测试。
+- 验证：写一个临时测试 import mpegts.js 并断言补丁方法存在于原型上，跑通后删除临时测试。（**执行调整**：保留为常驻回归用例 `tests/mpegts-patch.test.ts`，补丁失效时立即暴露，代价为一个 3ms 用例。）
 - 预计：1h。
 
 ### T1 类型与 API 封装 `src/features/recordings/types.ts` + `api.ts`
@@ -34,7 +34,7 @@
 
 ### T2 成员数据扩展 `src/data/members.ts`
 
-- 产出：`Member` 增加 `roomId?: number`（接口未返回该成员时录播分组兜底用）；补充 `mid` 关联说明注释。房间号以 `recording-status` 返回为准，本字段仅兜底（技术方案 §4.3）。
+- 产出：`Member` 增加 `roomId?: number`（接口未返回该成员时录播分组兜底用）；补充 `mid` 关联说明注释。（**执行调整**：同时补 `mid: number` 字段显式承载 B 站 UID，替代从 `bilibili` 直链解析，供 T6/T7 按 `mid` 关联 recording-status。）房间号以 `recording-status` 返回为准，本字段仅兜底（技术方案 §4.3）。
 - **测试用例（红）**：
   1. 四位成员均可携带 `roomId`（类型层面 + 若填入则为正整数）。
   2. 既有 members 测试（顺序、bilibili、colorKey）保持全绿，不回归。

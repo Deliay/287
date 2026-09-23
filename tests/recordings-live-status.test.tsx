@@ -1,0 +1,224 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
+import { LiveStatusGrid, useRecordingStatus } from "@/features/recordings/live-status-grid";
+import {
+  audioRegistry,
+  setLivePlayerFactory,
+  type LivePlayer,
+  type LivePlayerFactory,
+} from "@/features/recordings/live-audio/audio-player-registry";
+import { renderWithTheme } from "./utils";
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+/** 四位成员的录制状态：小松绿直播中，其余未开播 */
+const statusSample = {
+  items: [
+    {
+      mid: 1891335475,
+      roomId: 1001,
+      state: "recording",
+      sessionTitle: "重生之我是钓鱼大师",
+      files: ["a.flv"],
+      updatedAt: "2026-09-23T14:58:15.876Z",
+      streamer: { name: "小松绿Viridis" },
+    },
+    {
+      mid: 1512246445,
+      roomId: 1002,
+      state: "not_live",
+      sessionTitle: null,
+      files: [],
+      updatedAt: "2026-09-23T14:57:41.605Z",
+      streamer: { name: "四时小路Komichi" },
+    },
+    {
+      mid: 2138961136,
+      roomId: 1003,
+      state: "not_live",
+      sessionTitle: null,
+      files: [],
+      updatedAt: "2026-09-23T14:57:41.605Z",
+      streamer: { name: "羽啾chu2u" },
+    },
+    {
+      mid: 1150976664,
+      roomId: 1004,
+      state: "recording",
+      sessionTitle: "好空灵啊",
+      files: ["b.flv"],
+      updatedAt: "2026-09-23T14:58:16.339Z",
+      streamer: { name: "枝堇Sumire" },
+    },
+  ],
+};
+
+let restoreFactory: (() => void) | null = null;
+
+afterEach(() => {
+  audioRegistry.stopAll();
+  restoreFactory?.();
+  restoreFactory = null;
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  Object.defineProperty(document, "hidden", { value: false, configurable: true });
+});
+
+function fakePlayers() {
+  const ready: Array<() => void> = [];
+  const created: LivePlayer[] = [];
+  const factory: LivePlayerFactory = ({ onReady }) => {
+    const player: LivePlayer = { setVolume: vi.fn(), destroy: vi.fn() };
+    created.push(player);
+    ready.push(onReady);
+    return player;
+  };
+  return { factory, ready, created };
+}
+
+describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、AC-3 UI）", () => {
+  it("四张卡片按成员顺序渲染，直播中/未开播徽标与直播标题正确", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    renderWithTheme(<LiveStatusGrid />);
+
+    await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
+
+    const names = screen.getAllByTestId(/^live-card-/).map((card) => card.getAttribute("data-testid"));
+    expect(names).toEqual([
+      "live-card-viridis",
+      "live-card-komichi",
+      "live-card-chu2u",
+      "live-card-sumire",
+    ]);
+    expect(screen.getAllByText("直播中")).toHaveLength(2);
+    expect(screen.getAllByText("未开播")).toHaveLength(2);
+    expect(screen.getByText("好空灵啊")).toBeInTheDocument();
+    // 未开播卡片不显示直播标题
+    expect(screen.getByTestId("live-card-komichi").querySelector("h3, p")).toBeTruthy();
+    expect(screen.getByTestId("live-card-komichi").textContent).not.toContain("重生之我是钓鱼大师");
+    expect(screen.getAllByText(/^更新于/)).toHaveLength(4);
+  });
+
+  it("假定时器：30s 轮询一次；页面隐藏暂停，恢复可见立即刷新", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(statusSample));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderHook(() => useRecordingStatus());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(document, "hidden", { value: true, configurable: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    Object.defineProperty(document, "hidden", { value: false, configurable: true });
+    await act(async () => {
+      fireEvent(document, new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("接口缺失某成员时该卡片兜底「未开播」", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(jsonResponse({ items: statusSample.items.slice(0, 1) })),
+    );
+    renderWithTheme(<LiveStatusGrid />);
+
+    await waitFor(() => expect(screen.getAllByText("未开播")).toHaveLength(3));
+    expect(screen.getAllByText("直播中")).toHaveLength(1);
+    const komichi = screen.getByTestId("live-card-komichi");
+    expect(komichi).toHaveTextContent("未开播");
+    expect(komichi.querySelector("button")).toBeDisabled();
+  });
+
+  it("听直播按钮：直播中点击调用 play，收听中点击调用 stop", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    const { factory, ready } = fakePlayers();
+    restoreFactory = setLivePlayerFactory(factory);
+
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
+
+    const viridis = screen.getByTestId("live-card-viridis");
+    const listen = viridis.querySelector("button") as HTMLButtonElement;
+    expect(listen).toHaveTextContent("听直播");
+    expect(listen).not.toBeDisabled();
+
+    fireEvent.click(listen);
+    expect(audioRegistry.getLanesSnapshot()).toHaveLength(1);
+    expect(audioRegistry.getLanesSnapshot()[0]?.roomId).toBe(1001);
+    expect(audioRegistry.getLanesSnapshot()[0]?.label).toBe("小松绿");
+
+    act(() => {
+      ready[0]?.();
+    });
+    const stopButton = screen.getByTestId("live-card-viridis").querySelector(
+      "button",
+    ) as HTMLButtonElement;
+    expect(stopButton).toHaveTextContent("停止收听");
+
+    fireEvent.click(stopButton);
+    expect(audioRegistry.getLanesSnapshot()).toHaveLength(0);
+    expect(
+      screen.getByTestId("live-card-viridis").querySelector("button"),
+    ).toHaveTextContent("听直播");
+  });
+
+  it("接口失败显示错误文案与重试，不白屏；重试成功后恢复卡片", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("boom", { status: 500 }))
+      .mockResolvedValue(jsonResponse(statusSample));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument(),
+    );
+    expect(screen.getByText(/直播状态获取失败/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("单路收听失败仅该卡片显示重试入口", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    const created: LivePlayer[] = [];
+    const errors: Array<() => void> = [];
+    restoreFactory = setLivePlayerFactory(({ onError }) => {
+      const player: LivePlayer = { setVolume: vi.fn(), destroy: vi.fn() };
+      created.push(player);
+      errors.push(onError);
+      return player;
+    });
+
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("live-card-viridis").querySelector("button") as HTMLElement);
+    act(() => {
+      errors[0]?.();
+    });
+    expect(screen.getByRole("button", { name: /重试小松绿/ })).toBeInTheDocument();
+    expect(screen.getByTestId("live-card-sumire").querySelector("button")).toHaveTextContent("听直播");
+  });
+});

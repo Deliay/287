@@ -1,0 +1,254 @@
+diff --git a/dist/mpegts-byte-offset-seek.js b/dist/mpegts-byte-offset-seek.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..436deea88577bb161973e614f214842687fa4025
+--- /dev/null
++++ b/dist/mpegts-byte-offset-seek.js
+@@ -0,0 +1,235 @@
++/*
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * ============================================================================
++ * 录播优化一期补丁（sumire）
++ * ----------------------------------------------------------------------------
++ * 1) 暴露「按字节偏移续播」能力（seekToByteOffset），用于 FLV 无关键帧索引时的近似 seek。
++ *
++ * 背景：上游录播 FLV（录制端直接 dump）的 onMetaData 不含 keyframes 索引，
++ * 导致 MediaInfo.isSeekable() === false；而 TransmuxingController.seek() 首行即
++ * `if (this._mediaInfo == null || !this._mediaInfo.isSeekable()) return;`，未缓冲
++ * seek 因此静默 no-op，触发 mpegts 每 50ms 的未缓冲 seek 校正死循环（整体卡死）。
++ *
++ * 方案：在 createPlayer 返回的播放器实例上暴露
++ *   player.seekToByteOffset(fileposition, milliseconds)
++ * 它绕过 isSeekable() 门，从指定字节偏移继续加载（`_loadSegment(0, fileposition)`），
++ * remuxer 以期望的 milliseconds 作为时间基准并经 RECOMMEND_SEEKPOINT 回写 currentTime。
++ *
++ * lazyLoad 暂停死锁兜底（关键）：
++ * LoadingController（src/player/loading-controller.ts）在**任意** MEDIA_SEGMENT（音频也算）
++ * 到达时按 `buffered_end >= currentTime + lazyLoadMaxDuration` 暂停 transmuxer；而
++ * TransmuxingController._onRemuxerMediaSegmentArrival 的顺序是「先发 MEDIA_SEGMENT（触发暂停
++ * 判定）再发 RECOMMEND_SEEKPOINT（才回写 currentTime）」。续播时旧缓冲已 flush、currentTime
++ * 仍停在旧位置，若首个到达段为音频则 IO 被暂停，而恢复条件 `_resumeTransmuxerIfNeeded`
++ * 要求 currentTime 落在某 buffered 区间内（此刻为新时间轴、currentTime 在旧位置）→ 永假 →
++ * IO 永不恢复、首个视频关键帧永不到达、RECOMMEND_SEEKPOINT 永不触发 → 整体冻死。
++ * 兜底措施：
++ *   a) seek 期间临时置 `engine._config.lazyLoad = false`，使 LoadingController 完全跳过暂停判定；
++ *   b) 通过 `_seeking_handler.directSeek(target)` 立即把 `currentTime` 对齐到新时间轴
++ *      （与 accurateSeek 行为一致，且避免被 SeekingHandler 误当作浏览器端 seek 再触发校正）；
++ *   c) **重置 LoadingController 的暂停态**：旧 IO 被 `_internalAbort` 销毁后新 IO 由
++ *      `_loadSegment` 重建，但 `_paused` 可能仍是 seek 前懒加载暂停留下的 `true`——此时新 IO 不再
++ *      受暂停保护（其 pause 只作用于旧 ioctl），且因 `!this._paused` 为假而永不再次 suspend，
++ *      前瞻缓冲将无上限增长（实测直至 MSE 配额 ~160MB）。故续段后调用
++ *      `_loading_controller.resumeTransmuxer()` 复位 `_paused`（对新 ioctl 为空操作）。
++ * 由于 (b) 已把 currentTime 对齐，guard 只需覆盖「seek 发起 → 新流首个媒体段到达」这段极短窗口，
++ * 故在**首个 MEDIA_SEGMENT 或 RECOMMEND_SEEKPOINT**到达即恢复 lazyLoad（二者先到为准），
++ * 并保留 3s 定时器无条件兜底（实测 RECOMMEND_SEEKPOINT 可能不触发；不能长期关闭懒加载，
++ * 否则 LoadingController 永不暂停、前瞻缓冲无上限增长，击穿 50MB 字节预算）。
++ * guard 可重入：按 config（WeakMap）共享，连续 seek「续命」重新武装超时，仅最外层捕获/恢复
++ * previous（否则内层会把已被写为 false 的值当默认值、导致 lazyLoad 永久卡 false）。
++ *
++ * 调用方约束：fileposition 必须对齐到 FLV tag 边界（demuxer 无 mid-stream resync），
++ * 由应用层扫描保证（优先视频关键帧）。主线程引擎缺失（如开启 enableWorkerForMSE）时抛错，
++ * 由应用层捕获后显性提示，不得静默冻结。
++ *
++ * 2) 暴露「运行时调整缓冲上限」能力（setBufferLimits），供应用层按
++ *    size/duration 估算码率后把前瞻/回退缓冲折算到确定性字节预算（合计 ≤50MB）。
++ * ============================================================================
++ */
++'use strict';
++
++const mpegts = require('./mpegts.js');
++
++// guard 兜底超时（ms）：无 MEDIA_SEGMENT / RECOMMEND_SEEKPOINT 时也必须恢复，避免长期关闭懒加载
++const LAZY_LOAD_GUARD_TIMEOUT_MS = 3000;
++// 触发 guard 恢复的事件（先到为准）：新流首个媒体段到达即说明时间轴已切换
++const GUARD_RELEASE_EVENTS = ['media_segment', 'recommend_seekpoint'];
++
++// 可重入 guard 状态：按 config 维度记录当前激活的 guard（同一引擎连续 seek 共用同一 guard）
++const lazyLoadGuards = new WeakMap();
++
++function createLazyLoadGuard(transmuxer, config) {
++  // 仅最外层捕获 previous：重入的 seek 不再捕获（否则会把已被写为 false 的值当默认值）
++  const previous = config.lazyLoad;
++  config.lazyLoad = false;
++
++  const canOn = transmuxer && typeof transmuxer.on === 'function';
++  const canOff = transmuxer && typeof transmuxer.off === 'function';
++  let finished = false;
++  let timer = null;
++
++  const finish = () => {
++    if (finished) return;
++    finished = true;
++    config.lazyLoad = previous;
++    if (canOff) {
++      for (const event of GUARD_RELEASE_EVENTS) transmuxer.off(event, finish);
++    }
++    if (timer !== null) {
++      clearTimeout(timer);
++      timer = null;
++    }
++    lazyLoadGuards.delete(config);
++  };
++
++  const armTimer = () => {
++    if (typeof setTimeout !== 'function') return;
++    timer = setTimeout(finish, LAZY_LOAD_GUARD_TIMEOUT_MS);
++    if (timer && typeof timer.unref === 'function') timer.unref();
++  };
++
++  // 重入续命：重新武装超时（不清除 previous、不重复订阅）
++  const rearm = () => {
++    if (finished) return;
++    if (timer !== null) {
++      clearTimeout(timer);
++      timer = null;
++    }
++    armTimer();
++  };
++
++  if (canOn) {
++    for (const event of GUARD_RELEASE_EVENTS) transmuxer.on(event, finish);
++  }
++  // 定时器无条件武装：即使 transmuxer 无 on（既无事件恢复）也必须能超时恢复
++  armTimer();
++
++  return { finish, rearm };
++}
++
++function acquireLazyLoadGuard(transmuxer, config) {
++  if (!config) {
++    return { finish() {}, owned: false };
++  }
++  const existing = lazyLoadGuards.get(config);
++  if (existing) {
++    existing.rearm();
++    return { finish: existing.finish, owned: false };
++  }
++  const guard = createLazyLoadGuard(transmuxer, config);
++  lazyLoadGuards.set(config, guard);
++  return { finish: guard.finish, owned: true };
++}
++
++/**
++ * 兜底对齐：FLV tag 的 timestamp 是 DTS，而 MSE 内首个样本的 PTS 可能略大（B 帧 CTS 偏移），
++ * 若 `currentTime` 被设到缓冲区间起点之前，媒体元素会永久停在 seeking（buffer 有数据也不播）。
++ * 故在 seek 后数秒内周期性把 `currentTime` 夹到「覆盖它的目标缓冲区间」起点；已对齐时为空操作。
++ */
++function scheduleSeekAlignment(engine) {
++  if (!engine || !engine._media_element || typeof setTimeout !== 'function') return;
++  let attempts = 0;
++  const clamp = () => {
++    attempts += 1;
++    const el = engine._media_element;
++    if (el) {
++      try {
++        const buffered = el.buffered;
++        for (let i = 0; i < buffered.length; i++) {
++          if (buffered.end(i) > el.currentTime) {
++            const start = buffered.start(i);
++            if (el.currentTime < start) el.currentTime = start;
++            break;
++          }
++        }
++      } catch (e) {
++        // buffered 不可用：忽略
++      }
++    }
++    if (attempts < 20) setTimeout(clamp, 250);
++  };
++  setTimeout(clamp, 250);
++}
++
++function applyByteOffsetSeek(player, fileposition, milliseconds) {
++  const engine = player && player._player_engine;
++  const transmuxer = engine && engine._transmuxer;
++  const controller = transmuxer && transmuxer._controller;
++  if (!engine || !controller || typeof controller._loadSegment !== 'function') {
++    throw new Error('mpegts.js byte-offset seek is unavailable: unexpected internal structure (worker mode or unpatched build)');
++  }
++
++  // 防 lazyLoad 暂停死锁：seek 期间关闭懒加载，首个新媒体段/seekpoint 或超时后恢复
++  // 可重入：连续 seek 复用同一 guard（内层只续命），仅最外层关闭/恢复 lazyLoad
++  const guard = acquireLazyLoadGuard(transmuxer, engine._config);
++
++  try {
++    // 与 PlayerEngineMainThread._onRequiredUnbufferedSeek 一致：先 flush MSE 旧缓冲
++    if (engine._mse_controller && typeof engine._mse_controller.flush === 'function') {
++      engine._mse_controller.flush();
++    }
++    controller._internalAbort();
++    if (controller._remuxer) {
++      controller._remuxer.seek(milliseconds);
++      controller._remuxer.insertDiscontinuity();
++    }
++    controller._loadSegment(0, fileposition);
++    controller._pendingResolveSeekPoint = milliseconds;
++
++    // 复位 LoadingController 暂停态：新 ioctl 不受旧暂停约束，且 `_paused` 若仍为 true
++    // 会导致后续永不 suspend（前瞻缓冲无上限）。对未暂停的新 ioctl 是空操作。
++    const loadingController = engine._loading_controller;
++    if (loadingController && typeof loadingController.resumeTransmuxer === 'function') {
++      loadingController.resumeTransmuxer();
++    }
++
++    // 立即对齐时间轴：使 LoadingController 的暂停判定基准与新数据一致（guard 得以尽快释放）
++    const seconds = milliseconds / 1000;
++    if (engine._seeking_handler && typeof engine._seeking_handler.directSeek === 'function') {
++      engine._seeking_handler.directSeek(seconds);
++    } else if (engine._media_element) {
++      engine._media_element.currentTime = seconds;
++    }
++    // 兜底：DTS→PTS 偏移可能使 currentTime 落在新缓冲起点之前而永久 seeking，周期性夹齐
++    scheduleSeekAlignment(engine);
++  } catch (error) {
++    // 仅最外层守卫失败时恢复；重入的内层失败交由事件/超时兜底（避免误开 lazyLoad 使外层死锁）
++    if (guard.owned) guard.finish();
++    throw error;
++  }
++}
++
++const originalCreatePlayer = mpegts.createPlayer;
++
++mpegts.createPlayer = function createPlayer(mediaDataSource, config) {
++  const player = originalCreatePlayer.call(this, mediaDataSource, config);
++  if (!player) return player;
++
++  if (typeof player.seekToByteOffset !== 'function') {
++    player.seekToByteOffset = function seekToByteOffset(fileposition, milliseconds) {
++      applyByteOffsetSeek(this, fileposition, milliseconds);
++    };
++  }
++
++  if (typeof player.setBufferLimits !== 'function') {
++    player.setBufferLimits = function setBufferLimits(limits) {
++      const engine = this._player_engine;
++      if (engine && engine._config && limits) {
++        Object.assign(engine._config, limits);
++      }
++    };
++  }
++
++  return player;
++};
++
++// 供测试直接校验 seek 防死锁逻辑（不改变对外 API）
++mpegts.__sumireApplyByteOffsetSeek = applyByteOffsetSeek;
++
++module.exports = mpegts;
+diff --git a/package.json b/package.json
+index 009ab7ff632c69b3eef72cbb3781cb41836724b4..db9f7ac0f1532c26730a9b41ebc5f1de9f2474ce 100644
+--- a/package.json
++++ b/package.json
+@@ -2,7 +2,7 @@
+   "name": "mpegts.js",
+   "version": "1.8.2",
+   "description": "HTML5 MPEG2-TS Stream Player",
+-  "main": "./dist/mpegts.js",
++  "main": "./dist/mpegts-byte-offset-seek.js",
+   "types": "./d.ts/mpegts.d.ts",
+   "repository": {
+     "type": "git",
