@@ -195,3 +195,9 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 问题 | 处置 | 用例 |
 |------|------|------|
 | R2/R1 修复副作用：`.bar` 提升 `z-index: 3` 后位于覆盖式锚点之上且未设 `pointer-events`，成为命中测试拦截层——面板底部 4px 条带点击既不激活锚点也无任何处理（点击死区），违反技术方案 §4.3「点面板任意处进介绍区」 | 采用建议 a：`.bar` 为纯装饰元素，增加 `pointer-events: none`，点击穿透到 `a.panelLink`；hover 灰化经 `.panel`/`.wall` 的 `:hover` 链不受影响（命中目标下移仍在面板内） | 扩展 `hero-wall.test.tsx` 既有「层叠结构」用例：`.bar` 规则须含 `pointer-events: none`（先红后绿） |
+
+### 返工记录（第四轮，2026-09-23，Review R3）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R3 徽章槽 `pointer-events: auto` 作用于槽内**全部状态**：未开播 `span.offline` 与加载骨架 `span.skeleton` 非链接，点击命中后被吞掉（`closest("a")` 为 null 放行、span 无默认行为），徽章盒成为面板内点击死区；未开播是常态，影响大于 R2 的 4px 条带。与 R2 同源（pointer-events 分层边界遗漏），违反技术方案 §4.3 | 采用建议 a 的语义化写法：`live-badge.module.css` 基础规则 `.badge` 设 `pointer-events: none`，仅交互态 `.living` 恢复 `pointer-events: auto`——「仅交互态接管点击」；开播徽章在 `.badgeSlot` 的 auto 之下依旧可点（AC-3 不变），非交互态穿透到下方 `a.panelLink`（首屏）/ section 背景（介绍区，无行为差异）。不与方案 b 叠加 | `live-badge.test.tsx` 新增 CSS 结构断言：`.badge` 须含 `pointer-events: none`、`.living` 须含 `pointer-events: auto`、`.skeleton`/`.offline` 不得回设 auto（先红后绿） |

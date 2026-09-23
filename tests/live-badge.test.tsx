@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { LiveBadge } from "@/components/live-badge";
@@ -66,5 +68,31 @@ describe("直播状态徽章 LiveBadge", () => {
     renderWithTheme(<LiveBadge member={members[3]} />);
 
     expect(screen.getByRole("link")).not.toHaveClass(styles.ellipsis);
+  });
+});
+
+describe("直播状态徽章 LiveBadge 指针事件分层（R3 回归防护）", () => {
+  /** 从 CSS 源码取出某条规则的声明体 */
+  function ruleBody(css: string, selector: string): string {
+    return css.match(new RegExp(`\\.${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  }
+
+  it("非交互态关闭指针事件、仅开播态恢复 auto（徽章盒不成为面板点击死区）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/live-badge.module.css"),
+      "utf8",
+    );
+    const badgeBody = ruleBody(css, "badge");
+    const livingBody = ruleBody(css, "living");
+    const skeletonBody = ruleBody(css, "skeleton");
+    const offlineBody = ruleBody(css, "offline");
+
+    // 基础规则关闭指针事件：骨架/未开播态点击穿透到下方面板锚点（§4.3）
+    expect(badgeBody).toMatch(/pointer-events:\s*none/);
+    // 仅交互态（开播为链接）接管点击，AC-3 不受影响
+    expect(livingBody).toMatch(/pointer-events:\s*auto/);
+    // 非交互态不得回设 auto
+    expect(skeletonBody).not.toMatch(/pointer-events:\s*auto/);
+    expect(offlineBody).not.toMatch(/pointer-events:\s*auto/);
   });
 });

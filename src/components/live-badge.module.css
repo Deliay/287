@@ -1,4 +1,6 @@
-/* 直播状态徽章：固定高度三态（骨架 / 开播 / 未开播），沿用 Mantine 主题 token */
+/* 直播状态徽章：固定高度三态（骨架 / 开播 / 未开播），沿用 Mantine 主题 token
+   指针事件分层：默认关闭，仅交互态（开播链接）接管点击——
+   非交互态在首屏徽章槽（auto）之下点击穿透到面板锚点，不产生点击死区（R3） */
 .badge {
   display: inline-block;
   box-sizing: border-box;
@@ -9,6 +11,7 @@
   font-size: var(--mantine-font-size-xs);
   font-weight: 500;
   line-height: 1.5;
+  pointer-events: none;
 }
 
 /* 加载中：占位骨架，高度与徽章一致避免布局跳动 */
@@ -17,10 +20,12 @@
   background-color: var(--mantine-color-night287-7);
 }
 
-/* 开播：红底白字，状态不依赖颜色单独传达（另有 aria-label 文本） */
+/* 开播：红底白字，状态不依赖颜色单独传达（另有 aria-label 文本）；
+   唯一接管点击的状态，AC-3 徽章跳转 */
 .living {
   background-color: var(--mantine-color-red-6);
   color: var(--mantine-color-white);
+  pointer-events: auto;
 }
 
 /* 未开播：低强调文本，非链接、不可点击 */
