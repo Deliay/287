@@ -9,6 +9,7 @@
 import type {
   LiveEvent,
   LiveEventsResponse,
+  RecordingFileInfo,
   RecordingStatusResponse,
   RoomRecordingsResponse,
 } from "./types";
@@ -71,80 +72,79 @@ function structureError(url: string, detail: string): ApiError {
   return new ApiError("structure", `响应结构不符（${detail}）：${url}`, { url });
 }
 
+/**
+ * 解析单条录制状态（审核次要1）：`mid`/`roomId`/`state` 为关联与判定的必要字段，
+ * 缺失即跳过该条；`sessionTitle`、`streamer`、`files` 等按可缺省校验，不影响整响应。
+ */
 function parseStatusItem(raw: unknown): RecordingStatusResponse["items"][number] | null {
   if (!isRecord(raw)) return null;
   const { mid, roomId, state, sessionTitle, files, updatedAt, streamer } = raw;
   if (typeof mid !== "number" || typeof roomId !== "number") return null;
-  if (state !== "recording" && state !== "not_live") return null;
-  if (!Array.isArray(files) || !files.every((file) => typeof file === "string")) return null;
-  if (typeof updatedAt !== "string") return null;
-  if (!isRecord(streamer) || typeof streamer.name !== "string") return null;
-  if (sessionTitle !== null && typeof sessionTitle !== "string") return null;
-  return { mid, roomId, state, sessionTitle, files, updatedAt, streamer: { name: streamer.name } };
-}
-
-function parseFileInfo(raw: unknown): Record<string, unknown> | null {
-  return isRecord(raw) ? raw : null;
-}
-
-function parseRecordingFile(raw: unknown): RoomRecordingsResponse["files"][number] | null {
-  if (!isRecord(raw)) return null;
-  const { name, size, createdAt, info } = raw;
-  if (typeof name !== "string") return null;
-  if (typeof size !== "number" || typeof createdAt !== "string") return null;
-  if (info === undefined || info === null) return { name, size, createdAt };
-  const record = parseFileInfo(info);
-  if (
-    !record ||
-    typeof record.recordingId !== "string" ||
-    typeof record.title !== "string" ||
-    typeof record.mid !== "number" ||
-    typeof record.startedAt !== "string" ||
-    typeof record.endedAt !== "string"
-  ) {
-    return null;
-  }
   return {
-    name,
-    size,
-    createdAt,
-    info: {
-      recordingId: record.recordingId,
-      title: record.title,
-      mid: record.mid,
-      startedAt: record.startedAt,
-      endedAt: record.endedAt,
+    mid,
+    roomId,
+    state: state === "not_live" ? "not_live" : "recording",
+    sessionTitle: typeof sessionTitle === "string" ? sessionTitle : null,
+    files: Array.isArray(files) ? files.filter((file): file is string => typeof file === "string") : [],
+    updatedAt: typeof updatedAt === "string" ? updatedAt : "",
+    streamer: {
+      name: isRecord(streamer) && typeof streamer.name === "string" ? streamer.name : "",
     },
   };
 }
 
+/**
+ * 录播文件场次信息解析（审核次要1）：
+ * `recordingId` 为分段推导的必要字段，缺失视为「无 info」（容忍，不打死整个响应）；
+ * 其余字段按可缺省校验——录制进行中的文件常缺 `endedAt`。
+ */
+function parseFileInfo(raw: unknown): RecordingFileInfo | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (typeof raw.recordingId !== "string") return undefined;
+  return {
+    recordingId: raw.recordingId,
+    title: typeof raw.title === "string" ? raw.title : "",
+    mid: typeof raw.mid === "number" ? raw.mid : 0,
+    startedAt: typeof raw.startedAt === "string" ? raw.startedAt : "",
+    endedAt: typeof raw.endedAt === "string" ? raw.endedAt : "",
+  };
+}
+
+/** 解析单个录播文件；必要字段（name）缺失返回 null（跳过坏 item，审核次要1）。 */
+function parseRecordingFile(raw: unknown): RoomRecordingsResponse["files"][number] | null {
+  if (!isRecord(raw)) return null;
+  const { name, size, createdAt, info } = raw;
+  if (typeof name !== "string") return null;
+  const parsedInfo = parseFileInfo(info);
+  return {
+    name,
+    size: typeof size === "number" ? size : 0,
+    createdAt: typeof createdAt === "string" ? createdAt : "",
+    ...(parsedInfo ? { info: parsedInfo } : {}),
+  };
+}
+
+/**
+ * 解析单条直播事件（审核次要1）：`eventId`/`type`/`occurredAt` 为必要字段（缺失跳过坏 item），
+ * `sender` 内字段与 `medal`/`emote`/`gift`/`guard` 等结构按可缺省校验，失败降级为缺省值。
+ */
 function parseLiveEvent(raw: unknown): LiveEvent | null {
   if (!isRecord(raw)) return null;
   const { eventId, type, occurredAt, sender, content, emote, price, gift, guard } = raw;
   if (typeof eventId !== "string") return null;
   if (type !== "danmaku" && type !== "super_chat" && type !== "gift" && type !== "guard_buy") return null;
   if (typeof occurredAt !== "string") return null;
-  if (!isRecord(sender)) return null;
-  const { uid, name, face, medal, guardLevel } = sender;
-  if (typeof uid !== "number" || typeof name !== "string" || typeof face !== "string") return null;
-  if (guardLevel !== null && typeof guardLevel !== "number") return null;
-  let parsedMedal: { name: string; level: number; color: string } | null = null;
-  if (medal !== null && medal !== undefined) {
-    if (
-      !isRecord(medal) ||
-      typeof medal.name !== "string" ||
-      typeof medal.level !== "number" ||
-      typeof medal.color !== "string"
-    ) {
-      return null;
-    }
-    parsedMedal = { name: medal.name, level: medal.level, color: medal.color };
-  }
+  const rawSender = isRecord(sender) ? sender : {};
+  const uid = typeof rawSender.uid === "number" ? rawSender.uid : 0;
+  const name = typeof rawSender.name === "string" ? rawSender.name : "";
+  const face = typeof rawSender.face === "string" ? rawSender.face : "";
+  const guardLevel = typeof rawSender.guardLevel === "number" ? rawSender.guardLevel : null;
+  const medal = parseMedal(rawSender.medal);
   const event: LiveEvent = {
     eventId,
     type,
     occurredAt,
-    sender: { uid, name, face, medal: parsedMedal, guardLevel: guardLevel ?? null },
+    sender: { uid, name, face, medal, guardLevel },
   };
   if (typeof content === "string") event.content = content;
   if (
@@ -170,14 +170,25 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
   return event;
 }
 
+/** 徽章信息结构校验：不符时降级为 null（不影响整条事件，审核次要1）。 */
+function parseMedal(raw: unknown): { name: string; level: number; color: string } | null {
+  if (!isRecord(raw)) return null;
+  if (typeof raw.name !== "string" || typeof raw.level !== "number" || typeof raw.color !== "string") {
+    return null;
+  }
+  return { name: raw.name, level: raw.level, color: raw.color };
+}
+
 /** 当前四家直播间的录制状态列表。 */
 export async function fetchRecordingStatus(): Promise<RecordingStatusResponse> {
   const url = joinUrl(RECORDINGS_BASE_URL, "/api/b/live/recording-status");
   const data = await requestJson(url);
+  // 顶层结构缺失（无 items）仍视为结构错误；个别坏 item 跳过（审核次要1）
   if (!isRecord(data) || !Array.isArray(data.items)) throw structureError(url, "缺少 items");
-  const items = data.items.map(parseStatusItem);
-  if (items.some((item) => item === null)) throw structureError(url, "items 字段不合法");
-  return { items: items as RecordingStatusResponse["items"] };
+  const items = data.items
+    .map(parseStatusItem)
+    .filter((item): item is RecordingStatusResponse["items"][number] => item !== null);
+  return { items };
 }
 
 /** 某直播间的录播文件列表。 */
@@ -185,9 +196,10 @@ export async function fetchRoomRecordings(roomId: number): Promise<RoomRecording
   const url = joinUrl(RECORDINGS_BASE_URL, `/api/b/live/${roomId}/recordings`);
   const data = await requestJson(url);
   if (!isRecord(data) || !Array.isArray(data.files)) throw structureError(url, "缺少 files");
-  const files = data.files.map(parseRecordingFile);
-  if (files.some((file) => file === null)) throw structureError(url, "files 字段不合法");
-  return { files: files as RoomRecordingsResponse["files"] };
+  const files = data.files
+    .map(parseRecordingFile)
+    .filter((file): file is RoomRecordingsResponse["files"][number] => file !== null);
+  return { files };
 }
 
 export interface FetchLiveEventsParams {
@@ -199,28 +211,47 @@ export interface FetchLiveEventsParams {
   signal?: AbortSignal;
 }
 
+/** 上游契约：单次查询区间上限 12 小时（ms）。 */
+const MAX_QUERY_RANGE_MS = 12 * 60 * 60 * 1000;
+/** 上游契约：单页条数上限 100。 */
+const MAX_PAGE_SIZE = 100;
+
 /**
  * 按时间区间检索回放直播事件（弹幕等）。
- * 上游约束：单次区间 ≤ 12h、单页 ≤ 100 条，窗口切分由调用方负责。
+ * 上游契约：单次区间 ≤ 12h、单页 ≤ 100 条——调用方越界时在此**钳制**（审核次要10），
+ * 窗口切分（10min）由调用方负责；`total` 缺失时返回 0 表示未知，翻页由页满启发式兜底。
  */
 export async function fetchLiveEvents(params: FetchLiveEventsParams): Promise<LiveEventsResponse> {
+  const pageSize = Math.min(
+    MAX_PAGE_SIZE,
+    Math.max(1, Math.floor(Number.isFinite(params.pageSize) ? params.pageSize : MAX_PAGE_SIZE)),
+  );
+  const startMs = Date.parse(params.start);
+  const parsedEnd = Date.parse(params.end);
+  const endMs =
+    Number.isFinite(startMs) && Number.isFinite(parsedEnd) && parsedEnd - startMs > MAX_QUERY_RANGE_MS
+      ? startMs + MAX_QUERY_RANGE_MS
+      : parsedEnd;
+
   const search = new URLSearchParams();
   search.set("roomId", String(params.roomId));
   search.set("start", params.start);
-  search.set("end", params.end);
+  search.set("end", Number.isFinite(endMs) ? new Date(endMs).toISOString() : params.end);
   search.set("page", String(params.page));
-  search.set("pageSize", String(params.pageSize));
+  search.set("pageSize", String(pageSize));
   const url = `${joinUrl(API_BASE_URL, "/api/live-events/replay")}?${search.toString()}`;
   const data = await requestJson(url, params.signal ? { signal: params.signal } : undefined);
   if (!isRecord(data) || !Array.isArray(data.items)) throw structureError(url, "缺少 items");
-  const items = data.items.map(parseLiveEvent);
-  if (items.some((item) => item === null)) throw structureError(url, "items 字段不合法");
-  const total = typeof data.total === "number" ? data.total : items.length;
+  const items = data.items
+    .map(parseLiveEvent)
+    .filter((item): item is LiveEvent => item !== null);
+  // total 缺失（或非正数）→ 0 表示未知，避免「collected >= total」在首页即误判拉全
+  const total = typeof data.total === "number" && data.total > 0 ? data.total : 0;
   return {
     total,
     page: typeof data.page === "number" ? data.page : params.page,
-    pageSize: typeof data.pageSize === "number" ? data.pageSize : params.pageSize,
-    items: items as LiveEvent[],
+    pageSize,
+    items,
   };
 }
 

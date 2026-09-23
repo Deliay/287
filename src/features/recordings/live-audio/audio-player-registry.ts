@@ -61,6 +61,8 @@ interface LaneRecord {
   media: HTMLVideoElement;
   player: LivePlayer | null;
   meta?: LaneMeta;
+  /** 就绪事件先于异步 settle 到达时挂起，settle 后据此进入 playing（审核次要4） */
+  readyPending?: boolean;
   /** 创建代次：stop/重试后丢弃过期的异步创建结果。 */
   generation: number;
 }
@@ -100,7 +102,6 @@ export class AudioPlayerRegistry {
       generation: 0,
     };
     this.lanes.set(roomId, lane);
-    this.creating += 1;
     this.invalidate();
     this.spawn(lane, liveAudioUrl(roomId));
     return true;
@@ -173,6 +174,7 @@ export class AudioPlayerRegistry {
   private spawn(lane: LaneRecord, url: string): void {
     const generation = lane.generation;
     const isCurrent = () => this.lanes.get(lane.roomId) === lane && lane.generation === generation;
+    this.creating += 1;
 
     let result: LivePlayer | Promise<LivePlayer>;
     try {
@@ -181,8 +183,10 @@ export class AudioPlayerRegistry {
         media: lane.media,
         volume: lane.volume,
         onReady: () => {
-          if (!isCurrent() || !lane.player) return;
-          lane.state = "playing";
+          if (!isCurrent()) return;
+          // 就绪可能先于异步 settle 到达（mpegts 动态 import）→ 挂起，settle 时消费（审核次要4）
+          if (lane.player) lane.state = "playing";
+          else lane.readyPending = true;
           this.invalidate();
         },
         onError: () => {
@@ -192,6 +196,8 @@ export class AudioPlayerRegistry {
         },
       });
     } catch {
+      // 同步抛错同样释放 creating 计数（审核次要4）
+      this.creating -= 1;
       if (!isCurrent()) return;
       lane.state = "error";
       this.invalidate();
@@ -207,6 +213,10 @@ export class AudioPlayerRegistry {
       }
       lane.player = player;
       player.setVolume(lane.volume);
+      if (lane.readyPending) {
+        lane.state = "playing";
+        lane.readyPending = false;
+      }
       this.invalidate();
     };
 

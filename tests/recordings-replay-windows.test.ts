@@ -82,15 +82,25 @@ describe("时间锚点与分段推导 replay-windows（T9 / AC-7 对齐基准）
     expect(windowIndexFor(Number.NaN)).toBe(0);
   });
 
-  it("windowBounds 起止与 MAX_RANGE_MS 上界", () => {
+  it("windowBounds 起止与 12h 契约：12h 只约束单窗查询宽度，不做绝对时长上限", () => {
     const start = Date.parse("2026-09-23T20:00:00.000Z");
     expect(windowBounds(0, start)).toEqual({ startMs: start, endMs: start + WINDOW_MS });
     expect(windowBounds(0, start, start + 120_000)).toEqual({
       startMs: start,
       endMs: start + 120_000,
     });
-    const unknown = windowBounds(100, start);
-    expect(unknown.endMs).toBeLessThanOrEqual(start + MAX_RANGE_MS);
+    // 已知终点早于窗口起点 → 空窗（调用方跳过）
+    expect(windowBounds(10, start, start + 60_000).endMs).toBeLessThanOrEqual(
+      windowBounds(10, start, start + 60_000).startMs,
+    );
+
+    // 次要2：终点未知（info 缺失）时，index ≥ 72（>12h）的窗口仍是完整 10min，不得被静默拉空
+    const far = windowBounds(72, start);
+    expect(far.startMs).toBe(start + 72 * WINDOW_MS);
+    expect(far.endMs).toBe(far.startMs + WINDOW_MS);
+    const veryFar = windowBounds(200, start);
+    expect(veryFar.endMs).toBe(veryFar.startMs + WINDOW_MS);
+    expect(veryFar.endMs - veryFar.startMs).toBeLessThanOrEqual(MAX_RANGE_MS); // 单窗恒 ≤12h
   });
 
   it("offsetMsFor / toIso 互为逆运算", () => {

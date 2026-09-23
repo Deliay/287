@@ -16,6 +16,8 @@ type GroupState =
   | { kind: "idle" }
   /** 已请求但 recording-status 尚未就绪（等待状态数据，避免误判空态，审核次要9） */
   | { kind: "waiting" }
+  /** recording-status 请求失败：给出错误态而非一直等待（审核次要5） */
+  | { kind: "status-error" }
   | { kind: "loading" }
   | { kind: "ok"; files: RecordingFile[] }
   | { kind: "error" };
@@ -23,17 +25,21 @@ type GroupState =
 /** recording-status 数据就绪状态（由页面注入，缺省视为就绪）。 */
 export type StatusKind = "loading" | "error" | "ok";
 
-/** 按 `startedAt`（缺失回退 `createdAt`）倒序。 */
+/** 按 `startedAt`（缺失/空串回退 `createdAt`）倒序。 */
 export function sortRecordings(files: RecordingFile[]): RecordingFile[] {
-  return [...files].sort((a, b) => {
-    const left = Date.parse(a.info?.startedAt ?? a.createdAt);
-    const right = Date.parse(b.info?.startedAt ?? b.createdAt);
-    return (Number.isFinite(right) ? right : 0) - (Number.isFinite(left) ? left : 0);
-  });
+  return [...files].sort((a, b) => sortKey(b) - sortKey(a));
 }
 
 function recordingTitle(file: RecordingFile): string {
   return file.info?.title?.trim() || file.name;
+}
+
+/** 排序键：优先 `info.startedAt`，缺失/空串回退 `createdAt`（审核次要6）。 */
+function sortKey(file: RecordingFile): number {
+  const fromInfo = Date.parse(file.info?.startedAt ?? "");
+  if (Number.isFinite(fromInfo)) return fromInfo;
+  const fromCreated = Date.parse(file.createdAt);
+  return Number.isFinite(fromCreated) ? fromCreated : 0;
 }
 
 interface MemberGroupProps {
@@ -49,45 +55,67 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   const [expanded, setExpanded] = useState(false);
   const [state, setState] = useState<GroupState>({ kind: "idle" });
   const [page, setPage] = useState(1);
+  /** 本组数据实际来源的房间号：轮询导致 roomId 漂移时链接仍指向数据来源房间（审核次要6） */
+  const [loadedRoomId, setLoadedRoomId] = useState<number | undefined>(undefined);
   /** 是否已请求过加载（状态未就绪时先挂起，就绪后补跑） */
   const requestedRef = useRef(false);
+  /** 是否已有数据/空态（有则不再取数，审核次要6） */
+  const loadedRef = useRef(false);
+  /** 在途去重：observer 重建与补跑 effect 双触发只取一次（审核次要6） */
+  const inflightRef = useRef(false);
 
   const load = useCallback(async () => {
     requestedRef.current = true;
     // 触发加载即视为展开：视口触发后 aria-expanded / 箭头与内容保持一致（审核次要9）
     setExpanded(true);
+    if (loadedRef.current) return;
+    if (inflightRef.current) return;
     setPage(1);
+    if (statusKind === "error") {
+      setState({ kind: "status-error" });
+      return;
+    }
     if (statusKind !== "ok") {
       setState({ kind: "waiting" });
       return;
     }
     if (roomId === undefined) {
       // 接口已就绪但未返回该成员：分组展示空态（技术方案 §4.3）
+      loadedRef.current = true;
+      setLoadedRoomId(undefined);
       setState({ kind: "ok", files: [] });
       return;
     }
+    inflightRef.current = true;
     setState({ kind: "loading" });
     try {
       const response = await fetchRoomRecordings(roomId);
+      loadedRef.current = true;
+      setLoadedRoomId(roomId);
       setState({ kind: "ok", files: sortRecordings(response.files) });
     } catch {
       setState({ kind: "error" });
+    } finally {
+      inflightRef.current = false;
     }
   }, [roomId, statusKind]);
 
-  // recording-status 就绪后补跑挂起的加载（审核次要9）
+  // recording-status 就绪后补跑挂起的加载（审核次要9 / 次要5 错误态恢复）
   useEffect(() => {
     if (statusKind !== "ok") return;
-    if (!requestedRef.current || state.kind !== "waiting") return;
+    if (!requestedRef.current) return;
+    if (state.kind !== "waiting" && state.kind !== "status-error") return;
+    // 状态就绪/恢复时补跑挂起的加载：load 内首个 setState 仅为展开态标记，其后取数为异步
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [statusKind, state.kind, load]);
 
-  // 状态卡片点击定位（设计 §2.3）：展开并加载对应分组（审核次要6）
+  // 状态卡片点击定位（设计 §2.3）：展开并加载对应分组；失败态再次定位即重试（审核次要6）
   useEffect(() => {
     const onReveal = (event: Event) => {
       if (readRevealMemberId(event) !== member.id) return;
       setExpanded(true);
-      if (state.kind === "idle") void load();
+      if (state.kind === "idle" || state.kind === "error") void load();
     };
     window.addEventListener(REVEAL_GROUP_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_GROUP_EVENT, onReveal);
@@ -118,7 +146,8 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   const files = state.kind === "ok" ? state.files : [];
   const pageCount = Math.max(1, Math.ceil(files.length / PAGE_SIZE));
   const pageFiles = files.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const showContent = expanded || state.kind !== "idle";
+  // 收起即隐藏内容（数据保留在 state，再展开不重新取数）；ARIA/箭头与可见性保持一致（审核 R4）
+  const showContent = expanded;
 
   return (
     <div className={styles.group} id={`recordings-group-${member.id}`} data-testid={`recordings-group-${member.id}`}>
@@ -153,6 +182,12 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
             </p>
           )}
 
+          {state.kind === "status-error" && (
+            <p className={styles.empty} role="alert">
+              直播状态获取失败，录播分组暂不可用。
+            </p>
+          )}
+
           {state.kind === "loading" && (
             <div role="status" aria-label="加载中" className={styles.skeletons}>
               <span className={styles.skeleton} />
@@ -177,25 +212,32 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
           {state.kind === "ok" && files.length > 0 && (
             <>
               <ul className={styles.list} data-testid={`recordings-${member.id}-list`}>
-                {pageFiles.map((file) => (
-                  <li key={file.name} className={styles.item} data-testid="recording-item">
-                    <Link
-                      href={recordingReplayHref(roomId as number, file.name)}
-                      className={styles.itemLink}
-                    >
-                      <span className={styles.itemTitle} data-testid="recording-title">
-                        {recordingTitle(file)}
-                      </span>
-                      <span className={styles.itemMeta}>
-                        {formatDateTime(file.info?.startedAt ?? file.createdAt)}
-                        {formatDuration(file.info?.startedAt, file.info?.endedAt)
-                          ? ` · ${formatDuration(file.info?.startedAt, file.info?.endedAt)}`
-                          : ""}
-                        {file.size > 0 ? ` · ${formatFileSize(file.size)}` : ""}
-                      </span>
-                    </Link>
-                  </li>
-                ))}
+                {pageFiles.map((file) => {
+                  // 链接房间号取「数据来源房间」，避免轮询 roomId 漂移后链接指向新房间（审核次要6）
+                  const linkRoomId = loadedRoomId ?? roomId;
+                  const durationText = formatDuration(file.info?.startedAt, file.info?.endedAt);
+                  return (
+                    <li key={file.name} className={styles.item} data-testid="recording-item">
+                      <Link
+                        href={
+                          linkRoomId === undefined
+                            ? "#"
+                            : recordingReplayHref(linkRoomId, file.name)
+                        }
+                        className={styles.itemLink}
+                      >
+                        <span className={styles.itemTitle} data-testid="recording-title">
+                          {recordingTitle(file)}
+                        </span>
+                        <span className={styles.itemMeta}>
+                          {formatDateTime(file.info?.startedAt ?? file.createdAt)}
+                          {durationText ? ` · ${durationText}` : ""}
+                          {file.size > 0 ? ` · ${formatFileSize(file.size)}` : ""}
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
 
               {pageCount > 1 && (

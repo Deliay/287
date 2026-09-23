@@ -297,11 +297,42 @@ describe("代码审核返工：P1–P4 与次要项", () => {
 
     // 已缓冲 600s / 总 10800s ≈ 5.56%（当前实现误用 currentTime/duration = 0.56%）
     const bufferedBar = screen.getByTestId("buffered-bar");
-    expect(parseFloat(bufferedBar.style.width)).toBeCloseTo((600 / 10_800) * 100, 1);
+    const segments = bufferedBar.querySelectorAll('[data-testid="buffered-segment"]');
+    expect(segments).toHaveLength(1);
+    expect(parseFloat((segments[0] as HTMLElement).style.width)).toBeCloseTo((600 / 10_800) * 100, 1);
     // 已播放 60s / 10800s ≈ 0.56%，且为成员色（file.info.mid → sumire）
     const playedBar = screen.getByTestId("played-bar");
     expect(parseFloat(playedBar.style.width)).toBeCloseTo((60 / 10_800) * 100, 1);
     expect(playedBar.style.backgroundColor).toContain("sumire");
+  });
+
+  it("次要10 缓冲条按区间多段渲染（不以最大 end 单段高估）", async () => {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { value: 60, configurable: true });
+    Object.defineProperty(video, "buffered", {
+      value: {
+        length: 2,
+        start: (index: number) => (index === 0 ? 0 : 20),
+        end: (index: number) => (index === 0 ? 10 : 30),
+      },
+      configurable: true,
+    });
+    fireEvent.timeUpdate(video);
+    await flush();
+
+    const bar = screen.getByTestId("buffered-bar");
+    const segments = Array.from(bar.querySelectorAll('[data-testid="buffered-segment"]')) as HTMLElement[];
+    expect(segments).toHaveLength(2);
+    expect(parseFloat(segments[0].style.width)).toBeCloseTo((10 / 60) * 100, 1);
+    expect(parseFloat(segments[0].style.left ?? "0%")).toBeCloseTo(0, 1);
+    expect(parseFloat(segments[1].style.width)).toBeCloseTo((10 / 60) * 100, 1);
+    expect(parseFloat(segments[1].style.left ?? "0%")).toBeCloseTo((20 / 60) * 100, 1);
+    // 不得以 max(end)=30s 单段高估（30/60=50%）
+    expect(bar.style.width).toBe("");
   });
 
   it("P3(a) 进度条拖动中仅预览，松开后才触发 seek", async () => {
@@ -391,6 +422,98 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     const list = screen.getByTestId("event-list");
     // 当前窗口（0–20min）内 3 条；远处 30 条（>2 个窗口）不得渲染
     expect(within(list).getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("R1(1) seek 途中旧播放推进不解除中态；落位（容差外）经 seeked 解除看门狗，15s 后不误报", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    // 模拟真实 performSeek：Range 扫描结束后（异步）才 arm 看门狗
+    const performSeek = vi.fn(
+      (args: PerformSeekArgs) =>
+        new Promise<boolean>((resolve) => {
+          window.setTimeout(() => {
+            args.watchdog?.arm();
+            resolve(true);
+          }, 100);
+        }),
+    );
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    // seek 途中旧播放持续推进（未到目标 61s）→ 中态不得解除
+    video.currentTime = 0.3;
+    fireEvent.timeUpdate(video);
+    video.currentTime = 0.6;
+    fireEvent.timeUpdate(video);
+    await flush();
+    expect(screen.getByRole("status", { name: "缓冲中" })).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(200); // 扫描完成 → arm
+    });
+    await flush();
+
+    // 落位（容差外：补丁按关键帧时间戳落位，与目标差 >1s）→ seeked 事件驱动解除
+    video.currentTime = 55;
+    fireEvent.seeked(video);
+    await flush();
+    expect(screen.queryByRole("status", { name: "缓冲中" })).not.toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("R1(2) 落位点与目标差 >1s（关键帧对齐常态）时续播后 15s 不误报", async () => {
+    vi.useFakeTimers();
+    const events = [makeEvent("e1", 61, "目标事件")];
+    const performSeek = vi.fn(
+      (args: PerformSeekArgs) =>
+        new Promise<boolean>((resolve) => {
+          window.setTimeout(() => {
+            args.watchdog?.arm();
+            resolve(true);
+          }, 100);
+        }),
+    );
+    const deps = makeDeps({
+      performSeek,
+      fetchEvents: () => Promise.resolve({ total: 1, items: events }),
+    });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
+    await flush();
+
+    // 途中推进一次（当前实现会在此误清 latch）
+    video.currentTime = 0.4;
+    fireEvent.timeUpdate(video);
+    act(() => {
+      vi.advanceTimersByTime(200); // 扫描完成 → arm
+    });
+    await flush();
+
+    // 落位在 55s：与目标 61s 差 6s（>1s 容差，关键帧对齐常态）
+    video.currentTime = 55;
+    fireEvent.timeUpdate(video);
+    await flush();
+
+    act(() => {
+      vi.advanceTimersByTime(16_000);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("次要7 移动端音量仅静音切换：静音按钮可切换静音/恢复", async () => {

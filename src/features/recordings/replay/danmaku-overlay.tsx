@@ -110,9 +110,9 @@ export function selectDanmakusToEmit<T extends { offsetSeconds: number }>(
   return offsets.filter((item) => item.offsetSeconds > prevSeconds && item.offsetSeconds <= nextSeconds);
 }
 
-/** 播放头回退或前跳超过阈值判为 seek。 */
+/** 播放头跳变（回退或前跳，|Δ|>阈值）判为 seek——小幅回退不算（审核次要7，与计划 T12 一致）。 */
 export function isSeekJump(prevSeconds: number, nextSeconds: number): boolean {
-  return nextSeconds < prevSeconds || nextSeconds - prevSeconds > SEEK_JUMP_THRESHOLD_SECONDS;
+  return Math.abs(nextSeconds - prevSeconds) > SEEK_JUMP_THRESHOLD_SECONDS;
 }
 
 /** 渲染循环调度（可注入，便于单测驱动帧）。 */
@@ -136,10 +136,15 @@ export interface DanmakuRenderer {
   enqueue(input: DanmakuInput): void;
   setPaused(paused: boolean): void;
   clear(): void;
+  /** 更新绘制缓冲与坐标系（尺寸为 CSS 像素，dpr 为设备像素比）——审核 R2 */
+  setMetrics(width: number, height: number, dpr: number): void;
   destroy(): void;
 }
 
-interface FlyingDanmaku extends ActiveDanmaku, DanmakuInput {}
+interface FlyingDanmaku extends ActiveDanmaku, DanmakuInput {
+  /** 表情图片加载后是否已按实际尺寸重测过宽度（审核次要7） */
+  measured?: boolean;
+}
 
 const imageCache = new Map<string, HTMLImageElement>();
 
@@ -177,12 +182,33 @@ export function createDanmakuRenderer(
   const fontFamily = options.fontFamily ?? "system-ui, sans-serif";
 
   let items: FlyingDanmaku[] = [];
-  const width = canvas.clientWidth || BASE_VIDEO_WIDTH;
-  const height = canvas.clientHeight || Math.round((BASE_VIDEO_WIDTH * 9) / 16);
+  let width = canvas.clientWidth || BASE_VIDEO_WIDTH;
+  let height = canvas.clientHeight || Math.round((BASE_VIDEO_WIDTH * 9) / 16);
+  let dpr =
+    typeof window !== "undefined" && Number.isFinite(window.devicePixelRatio) && window.devicePixelRatio > 0
+      ? window.devicePixelRatio
+      : 1;
   let paused = false;
   let handle: number | null = null;
   let lastTs = 0;
   let destroyed = false;
+
+  /**
+   * 同步绘制缓冲与坐标系（审核 R2）：`canvas.width/height` 是位图缓冲，
+   * 只设 CSS 尺寸会让 300×150 默认缓冲被拉伸——超出缓冲的绘制坐标全部不可见。
+   * `setTransform(dpr)` 后，绘制逻辑统一使用 CSS 像素坐标。
+   */
+  function applyMetrics(nextWidth: number, nextHeight: number, nextDpr: number): void {
+    if (Number.isFinite(nextWidth) && nextWidth > 0) width = nextWidth;
+    if (Number.isFinite(nextHeight) && nextHeight > 0) height = nextHeight;
+    if (Number.isFinite(nextDpr) && nextDpr > 0) dpr = nextDpr;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+    ctx?.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  // 初始化绘制缓冲（默认按容器尺寸 ×DPR）
+  applyMetrics(width, height, dpr);
 
   function measure(input: DanmakuInput): number {
     const fontSize = fontSizeForWidth(width);
@@ -204,8 +230,14 @@ export function createDanmakuRenderer(
     if (item.emoteUrl) {
       const image = loadImage(item.emoteUrl);
       if (image.complete && image.naturalWidth > 0) {
+        // 图片加载完成后按实际尺寸重测一次（否则一直用估宽绘制会被压扁，审核次要7）
+        if (!item.measured) {
+          item.width = Math.min(image.naturalWidth, fontSize * 4);
+          item.measured = true;
+        }
         const ratio = image.naturalHeight > 0 ? image.naturalHeight / image.naturalWidth : 1;
-        const maxEmoteHeight = fontSize * EMOTE_MAX_SCALE;
+        // 高度上限取「字号倍数」与「轨道高」较小者：表情不得压过轨道造成相邻轨道重叠（审核次要7）
+        const maxEmoteHeight = Math.min(fontSize * EMOTE_MAX_SCALE, laneHeight * 0.9);
         const w = Math.min(item.width, fontSize * 4, maxEmoteHeight / ratio);
         ctx.drawImage(image, item.x, y - w * ratio + fontSize / 2, w, w * ratio);
       } else {
@@ -264,6 +296,10 @@ export function createDanmakuRenderer(
     clear() {
       items = [];
     },
+    setMetrics(nextWidth, nextHeight, nextDpr) {
+      applyMetrics(nextWidth, nextHeight, nextDpr);
+      ensureLoop();
+    },
     destroy() {
       destroyed = true;
       if (handle !== null) scheduler.cancel(handle);
@@ -310,13 +346,31 @@ export function DanmakuOverlay({
   const rendererRef = useRef<DanmakuRenderer | null>(null);
   const prevRef = useRef<number | null>(null);
 
-  // 渲染器随组件挂载/卸载创建销毁（页面卸载即停止）
+  // 渲染器随组件挂载/卸载创建销毁（页面卸载即停止）；容器尺寸变化时同步绘制缓冲（审核 R2）
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const renderer = createDanmakuRenderer(canvas, scheduler ? { scheduler } : {});
     rendererRef.current = renderer;
+
+    const observer =
+      typeof ResizeObserver === "function"
+        ? new ResizeObserver((entries) => {
+            const rect = entries[entries.length - 1]?.contentRect;
+            if (!rect) return;
+            renderer.setMetrics(
+              rect.width,
+              rect.height,
+              typeof window !== "undefined" && window.devicePixelRatio > 0
+                ? window.devicePixelRatio
+                : 1,
+            );
+          })
+        : null;
+    observer?.observe(canvas);
+
     return () => {
+      observer?.disconnect();
       renderer.destroy();
       rendererRef.current = null;
     };
@@ -335,9 +389,13 @@ export function DanmakuOverlay({
     const prev = prevRef.current;
     prevRef.current = currentTime;
 
-    // 弹幕开关关闭时不发射（区间继续推进，避免重新开启后补发堆积）
-    if (!enabled) return;
     if (prev === currentTime) return;
+
+    // 弹幕开关关闭：清屏（在飞弹幕立即消失），且 seek 也不再重建（审核次要7）
+    if (!enabled) {
+      renderer.clear();
+      return;
+    }
 
     const offsets = danmakuOffsets(events, recordStartMs);
     if (isSeekJump(prev, currentTime)) {

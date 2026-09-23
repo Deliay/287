@@ -163,4 +163,37 @@ describe("多路音频注册表（T3 / AC-3）", () => {
     registry.stop(11);
     expect(registry.getMediaElements().map((entry) => entry.roomId)).toEqual([12]);
   });
+
+  it("次要4 onReady 早于异步 settle 时该路仍进入 playing（不卡加载中）", async () => {
+    const factory: LivePlayerFactory = (args) => {
+      // 模拟 mpegts 动态 import：就绪事件先于 Promise settle
+      args.onReady();
+      return Promise.resolve({ setVolume: vi.fn(), destroy: vi.fn() });
+    };
+    const registry = createAudioPlayerRegistry(factory);
+
+    expect(registry.play(55)).toBe(true);
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("loading");
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("playing");
+  });
+
+  it("次要4 同步抛错的工厂也会释放 creating 计数（后续可继续 play）", () => {
+    let shouldThrow = true;
+    const factory: LivePlayerFactory = () => {
+      if (shouldThrow) throw new Error("boom");
+      return { setVolume: vi.fn(), destroy: vi.fn() };
+    };
+    const registry = createAudioPlayerRegistry(factory);
+
+    expect(registry.play(1)).toBe(true);
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("error");
+    registry.stop(1);
+
+    shouldThrow = false;
+    expect(registry.play(2)).toBe(true);
+    expect(registry.getLanesSnapshot()).toHaveLength(1);
+    registry.stopAll();
+  });
 });

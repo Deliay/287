@@ -187,8 +187,7 @@ describe("弹幕窗口增量加载 replay-events（T10 / AC-7）", () => {
     store.dispose();
   });
 
-  it("请求失败置 error 并可 retry 重拉", async () => {
-    let fail = true;
+  it("请求失败置 error 并可 retry 重拉", async () => {    let fail = true;
     const { calls, fetchEvents } = captureFetch(() => {
       if (fail) return new Response("boom", { status: 500 });
       return jsonResponse({ total: 0, page: 1, pageSize: 100, items: [] });
@@ -205,6 +204,86 @@ describe("弹幕窗口增量加载 replay-events（T10 / AC-7）", () => {
     await flush();
     expect(store.getSnapshot().error).toBe(false);
     expect(calls).toHaveLength(2);
+    store.dispose();
+  });
+
+  it("次要3 total 缺失/0 时不提前 break：按页拉全到不足一页为止", async () => {
+    const pages: Record<number, number> = { 1: 100, 2: 30, 3: 0 };
+    const calls: number[] = [];
+    const fetchEvents: FetchEvents = async (params) => {
+      calls.push(params.page);
+      const count = pages[params.page] ?? 0;
+      return {
+        total: 0, // 上游未回 total（或为 0）
+        items: Array.from({ length: count }, (_, index) =>
+          makeEvent(`p${params.page}-${index}`, new Date(START_MS + params.page * 1000 + index).toISOString()),
+        ),
+      };
+    };
+    const store = createReplayEventsStore({ roomId: 7, startMs: START_MS, fetchEvents });
+    store.focusWindow(0);
+    await flush();
+
+    expect(calls).toEqual([1, 2]);
+    expect(store.getSnapshot().events).toHaveLength(130);
+    expect(store.getSnapshot().error).toBe(false);
+    store.dispose();
+  });
+
+  it("次要3 触及 MAX_WINDOW_PAGES 上限时置 error（不静默截断）", async () => {
+    const fetchEvents: FetchEvents = async () => ({
+      total: 1_000_000,
+      items: Array.from({ length: WINDOW_PAGE_SIZE }, (_, index) =>
+        makeEvent(`bulk-${index}`, new Date(START_MS + index).toISOString()),
+      ),
+    });
+    const store = createReplayEventsStore({ roomId: 7, startMs: START_MS, fetchEvents });
+    store.focusWindow(0);
+    await flush();
+
+    expect(store.getSnapshot().error).toBe(true);
+    store.dispose();
+  });
+
+  it("次要3 inflight 归属比对：被取代的旧请求不误删新请求的在途记录", async () => {
+    const resolvers: Array<(value: unknown) => void> = [];
+    let fetchCount = 0;
+    const fetchEvents: FetchEvents = () => {
+      fetchCount += 1;
+      return new Promise((resolve) => {
+        resolvers.push(resolve);
+      }).then(() => ({ total: 0, items: [] as ReturnType<typeof makeEvent>[] }));
+    };
+    const store = createReplayEventsStore({ roomId: 7, startMs: START_MS, fetchEvents });
+
+    store.focusWindow(0); // 窗口0 在途（A）
+    await flush();
+    store.focusWindow(1); // 取代 → 中止 A
+    await flush();
+    store.focusWindow(0); // 窗口0 新请求（B）在途
+    await flush();
+    expect(fetchCount).toBe(3);
+
+    resolvers[0]?.({}); // A 迟到返回 → 其 finally 不得删掉 B 的在途记录
+    await flush();
+
+    const before = fetchCount;
+    void store.ensureWindow(0); // B 仍在途 → 不应重复取数（不 await：B 尚未完成）
+    expect(fetchCount).toBe(before);
+    store.dispose();
+  });
+
+  it("次要3 startMs 非法（NaN）时不取数也不置 error", async () => {
+    const spy = vi.fn(() => Promise.resolve({ total: 0, items: [] as ReturnType<typeof makeEvent>[] }));
+    const store = createReplayEventsStore({ roomId: 7, startMs: Number.NaN, fetchEvents: spy });
+
+    store.focusWindow(0);
+    store.prefetchNext(1_000);
+    await flush();
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(store.getSnapshot().loading).toBe(false);
+    expect(store.getSnapshot().error).toBe(false);
     store.dispose();
   });
 });

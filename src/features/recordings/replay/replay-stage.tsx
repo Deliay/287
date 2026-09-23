@@ -42,6 +42,11 @@ export const PLAYBACK_RATES = [0.5, 1, 1.25, 1.5, 2] as const;
 /** 控件栏静止自动隐藏延时（仅播放中生效）。 */
 const CONTROLS_HIDE_MS = 3000;
 
+/** 落位判定：以 seek 目标为中心的邻域容差（秒，审核 R1）。 */
+const SEEK_LAND_TOLERANCE = 1;
+/** 落位判定：单次媒体采样内位移超过该值（秒）视为 seek 跳变落位，而非旧播放的连续推进（审核 R1）。 */
+const SEEK_SAMPLE_JUMP_SECONDS = 2;
+
 /** 依赖注入点：单测替换播放器/取数实现，生产走默认实现。 */
 export interface ReplayStageDeps {
   startReplay?: (args: StartReplayArgs) => Promise<boolean>;
@@ -95,8 +100,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const seekTokenRef = useRef(0);
   /** 最近一次 seek 目标（重试按钮用） */
   const lastSeekRef = useRef<number | null>(null);
-  /** 续播判定上下文：从 pre-seek 位置到 target 的移动视为恢复 */
+  /** 续播判定上下文：仅在「落位到目标邻域 / 跳变落位 / seeked 事件」时消费（审核 R1） */
   const seekResumeRef = useRef<{ token: number; from: number | null; target: number } | null>(null);
+  /** 上一次媒体采样时间：用于识别单次采样内的跳变落位（区别于旧播放的连续推进） */
+  const lastSampleRef = useRef<number | null>(null);
 
   const url = recordingFileUrl(roomId, file.name);
   const recordStartMs = bounds.startMs;
@@ -110,8 +117,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [failed, setFailed] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(boundsDuration);
-  /** 已缓冲区间末端（秒）：来自 `video.buffered`，进度条「已缓冲」段用（审核 P2） */
-  const [bufferedEnd, setBufferedEnd] = useState(0);
+  /** 已缓冲区间集合（起止秒）：来自 `video.buffered`，进度条「已缓冲」按区间多段渲染（审核 P2/次要10） */
+  const [bufferedRanges, setBufferedRanges] = useState<Array<[number, number]>>([]);
   const [seeking, setSeeking] = useState(false);
   const [seekError, setSeekError] = useState<string | null>(null);
   /** 进度条拖动预览值：松开才真正 seek（审核 P3-a） */
@@ -222,6 +229,21 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     return () => window.clearTimeout(timer);
   }, [playing, controlsActivity]);
 
+  /**
+   * 真实恢复落位：解除看门狗并收敛 seek 中态。
+   * 仅由「目标邻域 / 采样跳变 / seeked 事件」三条真实恢复信号调用（审核 R1），
+   * seek 途中旧播放的连续推进绝不会走到这里。
+   */
+  const landResume = useCallback(() => {
+    const watchdog = watchdogRef.current;
+    const resume = seekResumeRef.current;
+    if (!watchdog || !resume || resume.token !== seekTokenRef.current) return;
+    watchdog.disarm();
+    watchdogRef.current = null;
+    seekResumeRef.current = null;
+    setSeeking(false);
+  }, []);
+
   const handleMediaEvent = useCallback(
     (media: HTMLVideoElement) => {
       setCurrentTime(media.currentTime);
@@ -233,34 +255,47 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
           return mediaDuration;
         });
       }
-      // 已缓冲区间末端（进度条「已缓冲」段，审核 P2）
-      let bufferedTo = 0;
+      // 已缓冲区间集合（进度条「已缓冲」段；多区间按段渲染，不以 max(end) 单段高估，审核次要10）
+      const ranges: Array<[number, number]> = [];
       try {
-        const ranges = media.buffered;
-        for (let index = 0; index < (ranges?.length ?? 0); index += 1) {
-          bufferedTo = Math.max(bufferedTo, ranges.end(index));
+        const buffered = media.buffered;
+        for (let index = 0; index < (buffered?.length ?? 0); index += 1) {
+          ranges.push([buffered.start(index), buffered.end(index)]);
         }
       } catch {
-        // buffered 不可用：保持 0
+        // buffered 不可用：保持空
       }
-      setBufferedEnd(bufferedTo);
-
-      // 续播恢复判定：currentTime 离开 pre-seek 位置或到达目标 → 解除看门狗（审核 P1）
-      const resume = seekResumeRef.current;
-      if (watchdogRef.current && resume && resume.token === seekTokenRef.current) {
-        const moved = resume.from !== null && media.currentTime !== resume.from;
-        const reached = Math.abs(media.currentTime - resume.target) <= 1;
-        if (moved || reached) {
-          watchdogRef.current.disarm();
-          watchdogRef.current = null;
-          seekResumeRef.current = null;
-          setSeeking(false);
+      setBufferedRanges((previous) => {
+        if (
+          previous.length === ranges.length &&
+          previous.every((range, index) => range[0] === ranges[index][0] && range[1] === ranges[index][1])
+        ) {
+          return previous;
         }
+        return ranges;
+      });
+
+      // 续播判定（审核 R1）：只认「真实落位」——
+      //  a) 落位到目标邻域（±1s）；b) 单次采样内跳变（seek 落位 vs 旧播放连续推进）。
+      // 旧播放的正常推进（位移小且渐进）不得解除中态/看门狗。
+      const resume = seekResumeRef.current;
+      if (resume && resume.token === seekTokenRef.current && watchdogRef.current) {
+        const previous = lastSampleRef.current;
+        const nearTarget = Math.abs(media.currentTime - resume.target) <= SEEK_LAND_TOLERANCE;
+        const jumped =
+          previous !== null && Math.abs(media.currentTime - previous) > SEEK_SAMPLE_JUMP_SECONDS;
+        if (nearTarget || jumped) landResume();
       }
+      lastSampleRef.current = media.currentTime;
       // 注意：不在这里无条件 setSeeking(false)——seek 中态由 seek 生命周期收敛（审核 P3-c）
     },
-    [file.size],
+    [file.size, landResume],
   );
+
+  /** 补丁 directSeek 落位后浏览器触发的 `seeked`：最可靠的「真实恢复」信号（审核 R1）。 */
+  const handleSeeked = useCallback(() => {
+    landResume();
+  }, [landResume]);
 
   // 播放推进：切换关注窗口 + 过半预取下一窗
   useEffect(() => {
@@ -306,6 +341,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       setSeeking(true);
       const media = videoRef.current;
       seekResumeRef.current = { token, from: media ? media.currentTime : null, target: offsetSeconds };
+      lastSampleRef.current = media ? media.currentTime : null;
 
       const watchdog = new SeekWatchdog(() => {
         if (seekTokenRef.current !== token) return;
@@ -339,13 +375,11 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       }).then((ok) => {
         if (seekTokenRef.current !== token) return;
         if (ok) {
-          // 成功分支：已缓冲路径会同步落位 → 立即收敛；
-          // 未缓冲路径保持 seek 中态，直到续播恢复 / 失败 / 看门狗（审核 P3-c）
+          // 成功分支：已缓冲路径会同步落位到目标邻域 → 立即收敛；
+          // 未缓冲路径的落位点可能偏离目标（关键帧对齐常态），交给 seeked / 跳变信号收敛（审核 R1）
           const media2 = videoRef.current;
-          if (media2 && Math.abs(media2.currentTime - offsetSeconds) <= 1) {
-            watchdog.disarm();
-            if (watchdogRef.current === watchdog) watchdogRef.current = null;
-            setSeeking(false);
+          if (media2 && Math.abs(media2.currentTime - offsetSeconds) <= SEEK_LAND_TOLERANCE) {
+            landResume();
           }
           return;
         }
@@ -362,7 +396,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       }
       setCurrentTime(offsetSeconds);
     },
-    [url, duration, file.size, performSeekFn, recordStartMs, focusWindow],
+    [url, duration, file.size, performSeekFn, recordStartMs, focusWindow, landResume],
   );
 
   /** 进度条松开/键盘抬起才提交 seek（设计 §2.5「拖动松开后开始 seek」，审核 P3-a） */
@@ -460,6 +494,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 onLoadedMetadata={(event) => handleMediaEvent(event.currentTarget)}
                 onDurationChange={(event) => handleMediaEvent(event.currentTarget)}
                 onProgress={(event) => handleMediaEvent(event.currentTarget)}
+                onSeeked={handleSeeked}
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
               />
@@ -510,15 +545,24 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               </button>
 
               <div className={styles.progressWrap}>
-                {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5 / 已播放 成员色 */}
+                {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
                 <div className={styles.progressTrack} aria-hidden="true">
-                  <div
-                    className={styles.buffered}
-                    data-testid="buffered-bar"
-                    style={{
-                      width: duration > 0 ? `${Math.min(100, (bufferedEnd / duration) * 100)}%` : "0%",
-                    }}
-                  />
+                  <div data-testid="buffered-bar" className={styles.bufferedBar}>
+                    {bufferedRanges.map(([start, end]) => (
+                      <div
+                        key={`${start}-${end}`}
+                        data-testid="buffered-segment"
+                        className={styles.buffered}
+                        style={{
+                          left: duration > 0 ? `${Math.min(100, (start / duration) * 100)}%` : "0%",
+                          width:
+                            duration > 0
+                              ? `${Math.min(100, (Math.max(0, end - start) / duration) * 100)}%`
+                              : "0%",
+                        }}
+                      />
+                    ))}
+                  </div>
                   <div
                     className={styles.played}
                     data-testid="played-bar"

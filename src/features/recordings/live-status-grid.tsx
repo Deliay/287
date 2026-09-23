@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import { members, type Member } from "@/data/members";
 import { fetchRecordingStatus } from "./api";
 import type { RecordingStatusItem } from "./types";
@@ -27,12 +35,17 @@ export interface RecordingStatusController {
  */
 export function useRecordingStatus(): RecordingStatusController {
   const [state, setState] = useState<RecordingStatusState>({ kind: "loading", items: [] });
+  /** 请求代次：旧响应（轮询/重试/visibility 叠加）不得覆盖新数据（审核次要5） */
+  const seqRef = useRef(0);
 
   const load = useCallback(async () => {
+    const seq = ++seqRef.current;
     try {
       const response = await fetchRecordingStatus();
+      if (seq !== seqRef.current) return;
       setState({ kind: "ok", items: response.items });
     } catch {
+      if (seq !== seqRef.current) return;
       setState((prev) => ({ kind: "error", items: prev.items }));
     }
   }, []);
@@ -49,6 +62,7 @@ export function useRecordingStatus(): RecordingStatusController {
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      seqRef.current += 1; // 卸载后丢弃在途响应
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
@@ -128,22 +142,38 @@ function ListenButton({ member, item, lane }: MemberCardProps) {
 function MemberCard({ member, item, lane }: MemberCardProps) {
   const recording = item?.state === "recording";
 
-  const handleCardClick = (event: MouseEvent<HTMLElement>) => {
-    // 按钮/链接点击不触发定位展开
-    if ((event.target as HTMLElement).closest("button, a")) return;
-    // 展开对应录播分组（设计文档 §2.3，审核次要6）
+  /** 定位并展开对应录播分组（按钮/链接点击除外）——鼠标与键盘共用（审核次要5/次要6） */
+  const revealGroup = (target: EventTarget | null) => {
+    const element = target as HTMLElement | null;
+    if (element && typeof element.closest === "function" && element.closest("button, a")) return;
     dispatchRevealGroup(member.id);
-    const target = document.getElementById(`recordings-group-${member.id}`);
-    if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    const el = document.getElementById(`recordings-group-${member.id}`);
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+  };
+
+  const handleCardClick = (event: MouseEvent<HTMLElement>) => {
+    revealGroup(event.target);
+  };
+
+  const handleCardKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    // 焦点在卡片内部按钮/链接上时交由其自身处理（Enter 触发 click）
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    revealGroup(event.target);
   };
 
   return (
     <article
       data-testid={`live-card-${member.id}`}
       className={styles.card}
+      role="button"
+      tabIndex={0}
+      aria-label={`${member.name} 直播状态卡片，回车定位到录播分组`}
       onClick={handleCardClick}
+      onKeyDown={handleCardKeyDown}
     >
       <span
         className={styles.bar}

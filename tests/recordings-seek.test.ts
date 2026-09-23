@@ -16,6 +16,7 @@ import {
 } from "@/features/recordings/replay/seek";
 import {
   computeBufferConfig,
+  destroyReplay,
   isPlaybackSupported,
   setMpegtsLoader,
   startReplay,
@@ -491,5 +492,69 @@ describe("flv-player：MSE 支持探测与缓冲预算（T11 / AC-5）", () => {
     // 时长未知时按保守高码率兜底，不为 0
     const fallback = computeBufferConfig(50_000_000, 0);
     expect(fallback.lazyLoadMaxDuration).toBeGreaterThan(0);
+  });
+
+  it("次要8 computeBufferConfig 启用 autoCleanupSourceBuffer（否则回退 40% 清理是死配置）", () => {
+    expect(computeBufferConfig(50_000_000, 100).autoCleanupSourceBuffer).toBe(true);
+    expect(computeBufferConfig(0, 0).autoCleanupSourceBuffer).toBe(true);
+  });
+
+  it("次要8 startReplay 并发：后发起者胜出，过期那次不再创建播放器", async () => {
+    interface Deferred {
+      promise: Promise<MpegtsLike>;
+      resolve: (value: MpegtsLike) => void;
+    }
+    const makeDeferred = (): Deferred => {
+      let resolve!: (value: MpegtsLike) => void;
+      const promise = new Promise<MpegtsLike>((r) => {
+        resolve = r;
+      });
+      return { promise, resolve };
+    };
+    const first = makeDeferred();
+    const second = makeDeferred();
+    let loadCall = 0;
+    const restoreLoader = setMpegtsLoader(() => (loadCall++ === 0 ? first.promise : second.promise));
+
+    const player = {
+      attachMediaElement: vi.fn(),
+      load: vi.fn(),
+      play: vi.fn(() => Promise.resolve()),
+      destroy: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      seekToByteOffset: vi.fn(),
+      setBufferLimits: vi.fn(),
+    };
+    const createPlayer = vi.fn(() => player);
+    const makeMpegts = (): MpegtsLike =>
+      ({
+        isSupported: () => true,
+        createPlayer,
+        Events: { MEDIA_INFO: "media_info", ERROR: "error" },
+      }) as unknown as MpegtsLike;
+
+    const media = document.createElement("video");
+    const pendingA = startReplay({
+      url: "https://rec.example.com/a.flv",
+      media,
+      fileSize: 1_000_000,
+      onError: () => {},
+    });
+    const pendingB = startReplay({
+      url: "https://rec.example.com/b.flv",
+      media,
+      fileSize: 1_000_000,
+      onError: () => {},
+    });
+
+    second.resolve(makeMpegts());
+    expect(await pendingB).toBe(true);
+    first.resolve(makeMpegts());
+    expect(await pendingA).toBe(false); // 过期创建被丢弃
+
+    expect(createPlayer).toHaveBeenCalledTimes(1);
+    restoreLoader();
+    destroyReplay();
   });
 });

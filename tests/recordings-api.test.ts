@@ -166,9 +166,10 @@ describe("录播 API 封装 types/api（T1）", () => {
       fetchLiveEvents({ roomId: 1, start: "a", end: "b", page: 1, pageSize: 100 }),
     ).rejects.toBeInstanceOf(ApiError);
 
+    // 顶层 items 存在但字段整体不合法（非对象数组元素）→ 仍属结构错误
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(jsonResponse({ items: [{ state: "recording" }] })),
+      vi.fn().mockResolvedValue(jsonResponse({ items: "oops" })),
     );
     await expect(fetchRecordingStatus()).rejects.toMatchObject({ kind: "structure" });
   });
@@ -215,5 +216,105 @@ describe("录播 API 封装 types/api（T1）", () => {
     expect(recordingReplayHref(7, "a b.flv")).toBe(
       "/recordings/replay?roomId=7&file=a%20b.flv",
     );
+  });
+
+  it("次要1 结构校验宽容：坏 item 跳过、可缺省字段按可缺省校验（不整响应失败）", async () => {
+    // 录制进行中的文件：info 有 startedAt 无 endedAt → 不得整体失败（直播中高概率命中）
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({
+            files: [
+              {
+                name: "live.flv",
+                size: 1024,
+                createdAt: "2026-09-23T23:00:00.000Z",
+                info: {
+                  recordingId: "rec-live",
+                  title: "直播中",
+                  mid: 1,
+                  startedAt: "2026-09-23T20:58:38.000Z",
+                },
+              },
+              { name: 123 },
+            ],
+          }),
+        ),
+    );
+    const recordings = await fetchRoomRecordings(9);
+    expect(recordings.files).toHaveLength(1); // 坏 item 跳过，好 item 保留
+    expect(recordings.files[0]?.info?.endedAt).toBe("");
+
+    // 状态：缺 sessionTitle / streamer 缺 name（可缺省）；缺 mid 的坏 item 跳过
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({
+            items: [
+              { mid: 1891335475, roomId: 1, state: "recording", updatedAt: "2026-09-23T14:58:15.876Z" },
+              { state: "not_live" },
+            ],
+          }),
+        ),
+    );
+    const status = await fetchRecordingStatus();
+    expect(status.items).toHaveLength(1);
+    expect(status.items[0]?.sessionTitle).toBeNull();
+    expect(status.items[0]?.streamer.name).toBe("");
+
+    // 事件：sender 缺 face/guardLevel、medal 结构不符、坏 item 缺 eventId
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({
+            total: 2,
+            items: [
+              {
+                eventId: "e1",
+                type: "danmaku",
+                occurredAt: "2026-09-23T21:00:01.000Z",
+                sender: { uid: 1, name: "观众", medal: { nope: 1 } },
+              },
+              { type: "danmaku", occurredAt: "2026-09-23T21:00:02.000Z" },
+            ],
+          }),
+        ),
+    );
+    const events = await fetchLiveEvents({
+      roomId: 1,
+      start: "2026-09-23T21:00:00.000Z",
+      end: "2026-09-23T21:10:00.000Z",
+      page: 1,
+      pageSize: 100,
+    });
+    expect(events.items).toHaveLength(1);
+    expect(events.items[0]?.sender.face).toBe("");
+    expect(events.items[0]?.sender.guardLevel).toBeNull();
+    expect(events.items[0]?.sender.medal).toBeNull();
+  });
+
+  it("次要10 fetchLiveEvents 钳制 pageSize≤100 且查询区间≤12h（上游契约）", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ total: 0, items: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchLiveEvents({
+      roomId: 5,
+      start: "2026-09-23T00:00:00.000Z",
+      end: "2026-09-23T20:00:00.000Z", // 20h > 12h
+      page: 1,
+      pageSize: 500, // > 100
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.searchParams.get("pageSize")).toBe("100");
+    const end = Date.parse(url.searchParams.get("end") as string);
+    const start = Date.parse(url.searchParams.get("start") as string);
+    expect(end - start).toBeLessThanOrEqual(12 * 60 * 60 * 1000);
   });
 });

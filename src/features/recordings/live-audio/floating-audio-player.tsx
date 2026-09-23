@@ -49,12 +49,17 @@ export function FloatingAudioPlayer() {
   const [collapsed, setCollapsed] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
 
-  // 媒体元素宿主：把各路 <video> 挂进 root layout 内的容器（跨路由存活的关键）
+  // 媒体元素宿主：把各路 <video> 挂进 root layout 内的容器（跨路由存活的关键），
+  // 并摘除已停止路遗留的孤儿节点（审核次要4：反复收听不得累积）
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const keep = new Set(mediaElements.map((entry) => entry.element));
     for (const entry of mediaElements) {
       if (entry.element.parentElement !== host) host.appendChild(entry.element);
+    }
+    for (const child of Array.from(host.children)) {
+      if (child instanceof HTMLVideoElement && !keep.has(child)) host.removeChild(child);
     }
   }, [mediaElements]);
 

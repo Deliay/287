@@ -9,6 +9,7 @@ import {
   createDanmakuRenderer,
   danmakuOffsets,
   isSeekJump,
+  laneHeightForWidth,
   selectDanmakusToEmit,
   type DanmakuScheduler,
 } from "@/features/recordings/replay/danmaku-overlay";
@@ -177,6 +178,104 @@ describe("弹幕浮层 danmaku-overlay（T12 / AC-7）", () => {
     expect(assignLane(occupied, 1920, laneCount)).toBeNull();
   });
 
+  it("次要7 isSeekJump 只认 |Δ|>2s 的跳变：小幅回退不算 seek", () => {
+    expect(isSeekJump(12, 11.5)).toBe(false); // 当前实现把任意回退当 seek → 红
+    expect(isSeekJump(12, 13.5)).toBe(false);
+    expect(isSeekJump(12, 100)).toBe(true);
+    expect(isSeekJump(100, 90)).toBe(true);
+    expect(isSeekJump(12, 14.1)).toBe(true);
+  });
+
+  it("次要7 弹幕开关关闭即清屏（在飞弹幕不再显示）", () => {
+    const { scheduler, runFrame } = manualScheduler();
+    const events = [makeEvent("m1", 11, "在飞弹幕")];
+    const { rerender } = renderOverlay({ events, currentTime: 10, scheduler });
+    runFrame();
+
+    rerender(
+      <DanmakuOverlay events={events} recordStartMs={START_MS} currentTime={11} playing enabled scheduler={scheduler} />,
+    );
+    expect(runFrame()).toContain("在飞弹幕");
+
+    rerender(
+      <DanmakuOverlay
+        events={events}
+        recordStartMs={START_MS}
+        currentTime={12}
+        playing
+        enabled={false}
+        scheduler={scheduler}
+      />,
+    );
+    ctx.fillText.mockClear();
+    expect(runFrame()).toHaveLength(0); // 关闭后仍在画 → 红
+  });
+
+  function makeTrackedImage() {
+    const created: Array<{ complete: boolean; naturalWidth: number; naturalHeight: number; src: string }> = [];
+    class FakeImage {
+      complete = false;
+      naturalWidth = 0;
+      naturalHeight = 0;
+      crossOrigin: string | null = null;
+      referrerPolicy: string | null = null;
+      src = "";
+      constructor() {
+        created.push(this);
+      }
+    }
+    vi.stubGlobal("Image", FakeImage);
+    return created;
+  }
+
+  it("次要7 表情弹幕高度不超过轨道高（不与相邻轨道重叠）", () => {
+    const images = makeTrackedImage();
+    const { scheduler, runFrame } = manualScheduler();
+    const canvas = document.createElement("canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 1920, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 1080, configurable: true });
+
+    const renderer = createDanmakuRenderer(canvas, { scheduler });
+    renderer.enqueue({ emoteUrl: "http://img.test/square-c7.png", emoteAlt: "耶" });
+    runFrame();
+
+    const image = images.at(-1) as unknown as { complete: boolean; naturalWidth: number; naturalHeight: number };
+    image.complete = true;
+    image.naturalWidth = 100;
+    image.naturalHeight = 100;
+    runFrame();
+
+    const call = ctx.drawImage.mock.calls.at(-1) as unknown[];
+    const height = call[4] as number;
+    const laneHeight = laneHeightForWidth(1920);
+    expect(height).toBeLessThanOrEqual(laneHeight);
+    renderer.destroy();
+  });
+
+  it("次要7 表情图片加载后按实际尺寸重测宽度", () => {
+    const images = makeTrackedImage();
+    const { scheduler, runFrame } = manualScheduler();
+    const canvas = document.createElement("canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 1920, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 1080, configurable: true });
+
+    const renderer = createDanmakuRenderer(canvas, { scheduler });
+    renderer.enqueue({ emoteUrl: "http://img.test/wide-c7.png", emoteAlt: "耶" });
+    runFrame();
+
+    const image = images.at(-1) as unknown as { complete: boolean; naturalWidth: number; naturalHeight: number };
+    image.complete = true;
+    image.naturalWidth = 400;
+    image.naturalHeight = 100;
+    runFrame();
+
+    const call = ctx.drawImage.mock.calls.at(-1) as unknown[];
+    const width = call[3] as number;
+    // 宽度按 naturalWidth 与 4×字号取小：min(400, 4×32) = 128（未重测时仍为估宽 64 → 红）
+    expect(width).toBe(128);
+    renderer.destroy();
+  });
+
   it("danmakuOffsets / selectDanmakusToEmit 只取 danmaku 类型并按区间过滤", () => {
     const events: LiveEvent[] = [
       makeEvent("a", 5),
@@ -206,5 +305,51 @@ describe("弹幕浮层 danmaku-overlay（T12 / AC-7）", () => {
     ctx.clearRect.mockClear();
     ctx.fillText.mockClear();
     expect(runFrame(2116)).toHaveLength(0);
+  });
+
+  it("R2 canvas 绘制缓冲与容器一致（含 DPR），并支持运行时 setMetrics", () => {
+    const { scheduler } = manualScheduler();
+    const canvas = document.createElement("canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 450, configurable: true });
+    Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });
+
+    const renderer = createDanmakuRenderer(canvas, { scheduler });
+    expect(canvas.width).toBe(1600); // 当前实现从不写 canvas.width → 恒为默认 300
+    expect(canvas.height).toBe(900);
+    expect(ctx.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+
+    renderer.setMetrics(1200, 675, 1);
+    expect(canvas.width).toBe(1200);
+    expect(canvas.height).toBe(675);
+    renderer.destroy();
+    Object.defineProperty(window, "devicePixelRatio", { value: 1, configurable: true });
+  });
+
+  it("R2 组件响应容器尺寸变化（ResizeObserver）更新绘制缓冲", () => {
+    const observed: Array<{ target: Element; callback: ResizeObserverCallback }> = [];
+    class MockResizeObserver {
+      constructor(private readonly callback: ResizeObserverCallback) {
+        observed.push({ target: null as unknown as Element, callback });
+      }
+      observe(target: Element) {
+        observed[0]!.target = target;
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+
+    const { container } = renderOverlay();
+    expect(observed).toHaveLength(1);
+
+    const observer = observed[0]!;
+    observer.callback(
+      [{ contentRect: { width: 640, height: 360, x: 0, y: 0, top: 0, left: 0, right: 640, bottom: 360 } }] as unknown as ResizeObserverEntry[],
+      observer as unknown as ResizeObserver,
+    );
+    const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+    expect(canvas.width).toBe(640);
+    expect(canvas.height).toBe(360);
   });
 });

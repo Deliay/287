@@ -20,6 +20,9 @@ const MIN_BUFFER_SECONDS = 0.1;
 const DEFAULT_BITRATE_BPS = 50_000_000;
 
 export interface BufferConfig {
+  /** 非 isLive 时 mpegts 默认**不**开启 SourceBuffer 自动清理 → 回退缓冲配置会成为死配置，
+   *  必须显式置 true，50MB 字节预算（前瞻 60% + 回退 40%）才完整生效（技术方案 §3.3，审核次要8）。 */
+  autoCleanupSourceBuffer: boolean;
   lazyLoadMaxDuration: number;
   lazyLoadRecoverDuration: number;
   autoCleanupMaxBackwardDuration: number;
@@ -44,6 +47,7 @@ export function computeBufferConfig(fileSize: number, durationSeconds: number): 
   const forwardBytes = BUFFER_BUDGET_BYTES * FORWARD_BUDGET_RATIO;
   const backwardBytes = BUFFER_BUDGET_BYTES * (1 - FORWARD_BUDGET_RATIO);
   return {
+    autoCleanupSourceBuffer: true,
     lazyLoadMaxDuration: secondsForBudget(forwardBytes, bitrate),
     lazyLoadRecoverDuration: secondsForBudget(forwardBytes / 6, bitrate),
     autoCleanupMaxBackwardDuration: secondsForBudget(backwardBytes, bitrate),
@@ -97,12 +101,16 @@ export interface StartReplayArgs {
   autoplay?: boolean;
 }
 
+/** start 代次：并发/被取代的 start 不得创建播放器（审核次要8，StrictMode 双 effect 与 URL 快切防泄漏）。 */
+let startGeneration = 0;
+
 /**
  * 启动回放播放（页面内单例）。
  * MSE 不支持时不初始化播放器并返回 `false`（调用方据此渲染降级文案）。
  */
 export async function startReplay(args: StartReplayArgs): Promise<boolean> {
-  destroyReplay();
+  destroyReplay(); // 先失效旧实例与所有在途 start
+  const token = ++startGeneration;
   let mpegts: MpegtsLike;
   try {
     mpegts = await loadMpegts();
@@ -110,6 +118,8 @@ export async function startReplay(args: StartReplayArgs): Promise<boolean> {
     console.error("[recordings] mpegts.js 加载失败", error);
     return false;
   }
+  // 加载期间已被新的 start/destroy 取代：不再创建（审核次要8）
+  if (token !== startGeneration) return false;
   if (!mpegts.isSupported()) return false;
 
   const config = computeBufferConfig(args.fileSize, 0);
@@ -117,6 +127,15 @@ export async function startReplay(args: StartReplayArgs): Promise<boolean> {
     { type: "flv", isLive: false, url: args.url },
     config,
   ) as PatchedPlayer;
+  // 创建后再次校验：被取代则立即释放，避免旧 player 泄漏（审核次要8）
+  if (token !== startGeneration) {
+    try {
+      player.destroy();
+    } catch {
+      // destroy 失败忽略
+    }
+    return false;
+  }
   if (typeof player.seekToByteOffset !== "function") {
     // 补丁未生效：显性暴露，后续未缓冲 seek 走失败提示（严禁静默冻结）
     console.error("[recordings] mpegts.js 字节偏移续播补丁未生效：实例缺少 seekToByteOffset");
@@ -130,8 +149,9 @@ export async function startReplay(args: StartReplayArgs): Promise<boolean> {
   return true;
 }
 
-/** 销毁回放播放器（幂等）；传 `url` 时仅当归属匹配才销毁。 */
+/** 销毁回放播放器（幂等）；传 `url` 时仅当归属匹配才销毁。任何销毁意图都会使在途 start 失效。 */
 export function destroyReplay(url?: string): void {
+  startGeneration += 1;
   if (url !== undefined && currentUrl !== url) return;
   if (currentPlayer) {
     try {

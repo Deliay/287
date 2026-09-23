@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SiteHeader } from "@/components/site-header";
 import { setLenis } from "@/lib/lenis";
@@ -75,6 +75,30 @@ describe("导航栏 SiteHeader（T5 / AC-1）", () => {
     expect(home).toHaveAttribute("data-active", "true");
     const recordings = within(nav).getByRole("link", { name: "录播" });
     expect(recordings).not.toHaveAttribute("data-active", "true");
+  });
+
+  it("R3 非首页路由点「首页」导航回 `/`（回顶仅在首页页内）", () => {
+    renderHeader("/recordings");
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const home = within(nav).getByRole("link", { name: "首页" });
+    expect(home).toHaveAttribute("href", "/");
+
+    const scrollTo = vi.fn();
+    setLenis({ scrollTo });
+    fireEvent.click(home);
+    // 走路由跳转而非锚点回顶
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(home).not.toHaveAttribute("href", "#top");
+  });
+
+  it("R3 录播子树（/recordings/replay）加亮「录播」导航项", () => {
+    renderHeader("/recordings/replay");
+    const nav = screen.getByRole("navigation", { name: "主导航" });
+    const recordings = within(nav).getByRole("link", { name: "录播" });
+    const home = within(nav).getByRole("link", { name: "首页" });
+    expect(recordings).toHaveAttribute("data-active", "true");
+    expect(recordings).toHaveAttribute("aria-current", "page");
+    expect(home).not.toHaveAttribute("data-active", "true");
   });
 
   it("点击「首页」回到页面顶部：lenis 可用时走 lenis.scrollTo(0)", async () => {

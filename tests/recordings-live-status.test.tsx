@@ -182,8 +182,7 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     ).toHaveTextContent("听直播");
   });
 
-  it("接口失败显示错误文案与重试，不白屏；重试成功后恢复卡片", async () => {
-    const fetchMock = vi
+  it("接口失败显示错误文案与重试，不白屏；重试成功后恢复卡片", async () => {    const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("boom", { status: 500 }))
       .mockResolvedValue(jsonResponse(statusSample));
@@ -220,5 +219,48 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     });
     expect(screen.getByRole("button", { name: /重试小松绿/ })).toBeInTheDocument();
     expect(screen.getByTestId("live-card-sumire").querySelector("button")).toHaveTextContent("听直播");
+  });
+
+  it("次要5 并发竞态：旧响应不得覆盖新数据（轮询/重试/visibility 叠加）", async () => {
+    const oldItem = {
+      mid: 1891335475,
+      roomId: 1001,
+      state: "recording",
+      sessionTitle: "旧标题",
+      files: [],
+      updatedAt: "2026-09-23T14:58:15.876Z",
+      streamer: { name: "小松绿Viridis" },
+    };
+    const newItem = { ...oldItem, sessionTitle: "新标题" };
+
+    // 由对象持有：闭包内赋值，避免 TS 把变量收窄成 never
+    const holder: { resolve: ((response: Response) => void) | null } = { resolve: null };
+    const first = new Promise<Response>((resolve) => {
+      holder.resolve = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(first)
+      .mockImplementation(() => Promise.resolve(jsonResponse({ items: [newItem] })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<LiveStatusGrid />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1); // 首拉挂起
+
+    // 第二次请求（恢复可见立即刷新）先返回
+    fireEvent(document, new Event("visibilitychange"));
+    await waitFor(() => expect(screen.getByText("新标题")).toBeInTheDocument());
+
+    // 旧响应迟到 → 不得覆盖新数据
+    holder.resolve?.(jsonResponse({ items: [oldItem] }));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("旧标题")).not.toBeInTheDocument();
+    expect(screen.getByText("新标题")).toBeInTheDocument();
   });
 });

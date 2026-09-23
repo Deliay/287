@@ -14,6 +14,22 @@ const navItems = [
   { label: "录播", href: "/recordings", match: "/recordings" },
 ];
 
+/**
+ * 解析实际 href：首页锚点 `#top` 仅在首页页内回顶；
+ * 在其它路由（如 `/recordings`）点「首页」必须导航回 `/`（审核 R3 / AC-8）。
+ */
+function resolveHref(item: (typeof navItems)[number], pathname: string | null): string {
+  if (item.href === "#top" && pathname !== null && pathname !== "/") return "/";
+  return item.href;
+}
+
+/** 当前页加亮：首页按 `/` 精确匹配；其余按路由**子树**匹配（`/recordings/replay` 也加亮「录播」，审核 R3）。 */
+function isActiveFor(item: (typeof navItems)[number], pathname: string | null): boolean {
+  if (pathname === null) return false;
+  if (item.match === "/") return pathname === "/";
+  return pathname === item.match || pathname.startsWith(`${item.match}/`);
+}
+
 function renderNavLinks(
   className: string,
   activeClass: string,
@@ -21,24 +37,24 @@ function renderNavLinks(
   onNavigate: (event: MouseEvent<HTMLAnchorElement>) => void,
 ): ReactNode {
   return navItems.map((item) => {
-    // 当前页加亮按「路由匹配」判断：首页锚点 `#top` 对应 `/`（设计文档 §2.1，审核次要8）
-    const isActive = item.match === pathname;
+    const href = resolveHref(item, pathname);
+    const isActive = isActiveFor(item, pathname);
     const classes = isActive ? `${className} ${activeClass}` : className;
     const navProps = {
       className: classes,
       onClick: onNavigate,
       ...(isActive ? { "aria-current": "page" as const, "data-active": "true" } : {}),
     };
-    // 锚点（首页回顶）保留原生 <a>；站内路由走 next/link
-    if (item.href.startsWith("#")) {
+    // 锚点（首页页内回顶）保留原生 <a>；其余（含跨路由回 `/`）走 next/link
+    if (href.startsWith("#")) {
       return (
-        <a key={item.href} href={item.href} {...navProps}>
+        <a key={item.label} href={href} {...navProps}>
           {item.label}
         </a>
       );
     }
     return (
-      <Link key={item.href} href={item.href} {...navProps}>
+      <Link key={item.label} href={href} {...navProps}>
         {item.label}
       </Link>
     );

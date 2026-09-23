@@ -21,6 +21,8 @@
 - 验证：写一个临时测试 import mpegts.js 并断言补丁方法存在于原型上，跑通后删除临时测试。（**执行调整**：保留为常驻回归用例 `tests/mpegts-patch.test.ts`，补丁失效时立即暴露，代价为一个 3ms 用例。）
 - 预计：1h。
 
+- **第二轮返工修复（2026-09-24 · 次要9 · mpegts 补丁健壮性）**：`patches/mpegts.js@1.8.2.patch` 重新生成——guard `finish` 改为 try/catch/finally，`transmuxer.off` 在 destroy 后抛错时吞掉异常并照常清理 timer 与 `lazyLoadGuards` 注册表（否则 guard 永不释放，后续 seek 复用 finished 旧 guard、lazyLoad 防死锁保护整体失效）；`scheduleSeekAlignment` 增加 3s 容差，只修正小幅 PTS/CTS 前偏，不再把 `currentTime` 夹回旧区间起点（回退 seek 场景）。补丁经 `pnpm install` 重放，`tests/mpegts-patch.test.ts` 新增 2 例回归。**书面澄清（次要9-① fileposition=0）**：`_loadSegment(0, fileposition)` 在 `fileposition === 0` 时走 init-chunk 重探测是「从头播放」的期望语义；且 FLV 文件首字节为 `F`，扫描函数的三重校验（`tagType ∈ {8,9,18}` + `dataSize>0` + `PrevTagSize` 匹配）不可能把偏移 0 判成 tag 边界，估算偏移为 0 仅出现在 `target = 0`（由已缓冲直跳分支覆盖），故该点不改补丁、以澄清代替。
+
 ### T1 类型与 API 封装 `src/features/recordings/types.ts` + `api.ts` ✅
 
 - 产出：`RecordingStatusResponse` / `RoomRecordingsResponse` / `LiveEvent` 等类型（字段与技术方案 §4.1 已实测结构一致）；`fetchRecordingStatus()` / `fetchRoomRecordings(roomId)` / `fetchLiveEvents({roomId, start, end, page, pageSize})` 封装，含轻量类型守卫（不引入 zod）与错误归一化（网络错误 / 非 2xx / 结构不符 → 统一 `ApiError`）；基址读 `NEXT_PUBLIC_RECORDINGS_BASE_URL` / `NEXT_PUBLIC_API_BASE_URL`，缺失回退生产默认值。
@@ -31,6 +33,8 @@
   4. 弹幕请求 URL 正确拼接 `roomId/start/end/page/pageSize` query。
 - 对应验收：AC-2 / AC-4 / AC-7 的数据来源基础。
 - 预计：1.5h。
+
+- **第二轮返工修复（2026-09-24 · 次要1、次要10-①）**：结构校验改为「顶层结构缺失（无 `items`/`files`）仍抛 `ApiError`，坏 item 跳过、可缺省字段按可缺省校验」——录制进行中的文件缺 `endedAt`、`sessionTitle`/`streamer.name`/`sender.face`/`guardLevel`/`medal` 缺失或结构不符都不再打死整个响应；`fetchLiveEvents` 在函数内强制钳制 `pageSize≤100`、单次查询区间≤12h（上游契约），`total` 缺失/非正返回 0 表示未知。红测试：`recordings-api`「次要1 结构校验宽容」「次要10 钳制 pageSize 与区间」。
 
 ### T2 成员数据扩展 `src/data/members.ts` ✅
 
@@ -65,6 +69,8 @@
 - 对应验收：AC-8。
 - 预计：2h。
 
+- **第二轮返工修复（2026-09-24 · 次要4）**：悬浮组件宿主 effect 摘除已停止路遗留的孤儿 `<video>`（反复收听不再累积节点）；注册表 `onReady` 早于异步 settle 时挂起为 `readyPending`、settle 后进入 `playing`（不再卡「加载中」）；`creating` 计数收敛进 `spawn`（同步抛错/重试/异步失败各恰好减一次）。红测试：`recordings-audio-registry` 次要4 两例、`recordings-floating-player` 次要4 一例。
+
 ### T5 导航入口 `src/components/site-header.tsx` ✅
 
 - 产出：`navItems` 增加 `{ label: "录播", href: "/recordings" }`（首页 → 录播顺序）；现有「首页」锚点逻辑（lenis 回顶）仅对 `#top` 生效，`/recordings` 走普通站内跳转；当前页加亮（设计文档 §2.1，`usePathname` 判断）。
@@ -74,6 +80,8 @@
   3. `usePathname()` mock 为 `/recordings` 时「录播」项带加亮 class。
 - 对应验收：AC-1。
 - 预计：1h。
+
+- **第二轮返工修复（2026-09-24 · R3）**：非 `/` 路由点「首页」导航回 `/`（`resolveHref` 将 `#top` 解析为 `/` 并走 `next/link`），首页页内保留回顶，AC-8「切回首页」不再被锚点拦截；当前页加亮改按**路由子树**匹配（`/recordings/replay` 也加亮「录播」），`pathname` 为 null（无路由上下文）时不加亮并保留锚点。红测试：`site-header` R3 两例。
 
 ### T6 直播状态卡片 `src/features/recordings/live-status-grid.tsx` ✅
 
@@ -87,6 +95,8 @@
 - 对应验收：AC-2、AC-3（UI 部分）。
 - 预计：2.5h。
 
+- **第二轮返工修复（2026-09-24 · 次要5）**：`useRecordingStatus` 增加请求代次，轮询/重试/visibilitychange 叠加时旧响应一律丢弃（不得覆盖新数据），卸载时作废在途响应；状态卡片补 `tabIndex` / `role="button"` / `onKeyDown`（Enter、空格）键盘可达地定位展开分组，内部按钮/链接的按键不冒泡处理。红测试：`recordings-live-status` 竞态一例、`recordings-section` 键盘一例。
+
 ### T7 历史录播列表 `src/features/recordings/recordings-section.tsx` ✅
 
 - 产出：按成员分组的 `RecordingsSection`：折叠态不请求；分组头进入视口（`IntersectionObserver`）或首次展开时触发 `fetchRoomRecordings`；骨架加载态 / 空态 / 错误重试态按设计文档 §2.4；按 `info.startedAt` 倒序；`PAGE_SIZE = 20` 分页；条目展示标题（缺失回退文件名）、录制时间、时长（`endedAt - startedAt`）、文件大小；点击条目 `next/link` 跳 `/recordings/replay?roomId=…&file=…`。
@@ -98,6 +108,8 @@
   5. 条目链接 href 含正确 `roomId` 与 `file`（URL 编码）。
 - 对应验收：AC-4。
 - 预计：2.5h。
+
+- **第二轮返工修复（2026-09-24 · R4、次要5/6 收尾）**：`showContent = expanded`——收起即隐藏内容，`aria-expanded`/▾ 箭头与可见性一致，再展开复用已加载数据且不重新取数（R4）；新增 `status-error` 状态，`recording-status` 请求失败时分组给出「直播状态获取失败」而非永远等待（次要5）；`loadedRef` + `inflightRef` 双守卫杜绝 observer 重建与补跑 effect 双触发重复取数、reveal 对失败分组会重试、列表链接改用 `loadedRoomId`（roomId 漂移不改链接）、`sortRecordings` 对空串 `startedAt` 回退 `createdAt`（次要6）。红测试：`recordings-section` R4 / 次要5 / 次要6 共 5 例。
 
 ### T8 录播页组装 `src/app/recordings/page.tsx` ✅
 
@@ -118,6 +130,8 @@
 - 对应验收：AC-7（对齐基准）。
 - 预计：1.5h。
 
+- **第二轮返工修复（2026-09-24 · 次要2）**：`windowBounds` 在终点未知时不再以 `recordStart + 12h` 作绝对上界（12h 只约束**单次查询区间**，单窗恒 10min），否则未知终点且录制 >12h 时 index ≥ 72 的窗口 `endMs ≤ startMs` 会被静默拉空。红测试：`recordings-replay-windows`「windowBounds 起止与 12h 契约」。
+
 ### T10 弹幕窗口加载 `src/features/recordings/replay/replay-events.ts` ✅
 
 - 产出：`useReplayEvents(roomId, bounds)`：10 分钟窗口增量拉取 `fetchLiveEvents`（遵守区间 ≤12h、pageSize ≤100，页内翻页拉全），`Map` 缓存窗口、`AbortController` 竞态控制、窗口过半预取下一窗；`eventsFor(offsetMs)` 返回当前及相邻窗口去重升序事件。
@@ -129,6 +143,8 @@
   5. `eventsFor` 去重并按 `occurredAt` 升序。
 - 对应验收：AC-7（数据加载部分）。
 - 预计：2h。
+
+- **第二轮返工修复（2026-09-24 · 次要3）**：翻页判定改为「页不满即末页 / `total>0` 且已满即停」（`total` 缺失或为 0 时不再首页即截断）；触及 `MAX_WINDOW_PAGES` 上限置 `error` 显性失败而非静默截断；`inflight` 清理按 controller 归属比对，被取代的旧请求不会误删新请求的在途记录；`startMs` 非法（NaN）视为禁用取数（不再被吞成 error）。红测试：`recordings-replay-events` 次要3 四例。
 
 ### T11 回放播放器与 seek `flv-player.ts` + `seek.ts` ✅
 
@@ -148,6 +164,8 @@
   - `performSeek` 失败文案按原因区分（网络失败 ≠ 上游未支持 Range ≠ 补丁缺失），禁止一律归咎 Range；过期探测（`stale`）静默丢弃、不调用 `onFailed`。
   - 回归用例（先红后绿）：`tests/recordings-seek.test.ts`「次要5 失败文案区分原因」「次要5 过期 seek 静默丢弃，不上报失败」「次要5 降级直试被补丁拒绝时返回 patch-missing」，并同步更新既有 `seekUnbuffered` 断言为 `outcome.ok/reason`。
 
+- **第二轮返工修复（2026-09-24 · 次要8、次要5 收尾）**：`computeBufferConfig` 返回 `autoCleanupSourceBuffer: true`（mpegts 非 `isLive` 默认关闭 SourceBuffer 自动清理，否则「回退 40%」为死配置、50MB 预算仅前瞻 60% 生效，与技术方案 §3.3 不符）；`startReplay` 引入 start 代次——在 mpegts 加载/创建期间被新的 start 或 destroy 取代时放弃或立即销毁刚创建的实例（StrictMode 双 effect、URL 快切不再泄漏旧 player）。红测试：`recordings-seek` 次要8 两例。
+
 ### T12 弹幕浮层 `src/features/recordings/replay/danmaku-overlay.tsx` ✅
 
 - 产出：canvas 2D + rAF 浮层：匀速右→左横穿（约 8s）、轨道分配防重叠、字号随画布宽度缩放、表情弹幕（`emote.url`）预载 `Image` 绘制；正常播放发射 `(prev, current]` 区间事件，seek 跳变（回退或前跳 >2s）清空并补发最近 4s；弹幕开关。
@@ -158,6 +176,8 @@
   4. 弹幕开关关闭时不发射。
 - 对应验收：AC-7（浮层部分）。
 - 预计：2.5h。
+
+- **第二轮返工修复（2026-09-24 · R2、次要7、次要10-②）**：canvas 绘制缓冲设为容器尺寸 ×DPR 并 `setTransform` 缩放，组件经 `ResizeObserver` 响应容器尺寸变化（此前从不写 `canvas.width/height`，默认 300×150 缓冲被拉伸到视频区，横穿轨迹大半不可见、轨道被裁剪）；弹幕开关关闭即**清屏**（在飞弹幕立即消失，关闭期间 seek 不重建）；`isSeekJump` 改判 `|Δ| > 2s`（与本任务测试计划「回退/前跳 >2s」一致，小幅回退不再误判）；表情弹幕图片加载后按实际尺寸重测宽度、高度钳到轨道高 ×0.9（不与相邻轨道重叠）。红测试：`recordings-danmaku-overlay` R2 / 次要7 共 6 例。
 
 ### T13 回放页舞台与路由 `replay-stage.tsx` + `src/app/recordings/replay/page.tsx` ✅
 
@@ -181,6 +201,8 @@
   - **次要7**：移动端音量仅保留静音切换（滑杆 PC 显示 / 静音按钮 `< 48em` 显示），可切换静音与恢复原音量；控件栏静止 3s 由 `opacity: 0.25` 改为真正隐藏（`visibility: hidden` + `pointer-events: none`），视频区鼠标移动与触摸均可重现。
   - **次要8（T5 联动）**：导航加亮改按「路由匹配」判断（首页锚点 `#top` 对应 `/`），首页页下「首页」项正确加亮并带 `aria-current`。
   - 回归用例（先红后绿）：`tests/recordings-replay-stage.test.tsx`「代码审核返工：P1–P4 与次要项」8 例、`tests/recordings-section.test.tsx` 次要6/9 三例、`tests/site-header.test.tsx` 次要8 一例、`tests/recordings-seek.test.ts` 次要5 三例；全量 `pnpm test` 20 文件 / 122 用例、`pnpm lint`、`tsc --noEmit`、`pnpm build` 全绿。
+
+- **第二轮返工修复（2026-09-24 · R1、次要10-②）**：续播判定只认「真实恢复」三条信号——`seeked` 事件、落位到目标邻域（±1s）、单次媒体采样内跳变（>2s）；seek 途中旧播放的连续推进**不再**解除中态/看门狗（P3-c 在真实播放时序下真正修复），落位点偏离目标 >1s（关键帧对齐常态）同样能可靠解除看门狗、15s 不误报（R1 原始症状换路径复现被堵住）；进度条「已缓冲」段按 `video.buffered` **按区间多段**渲染，不再以 `max(end)` 单段高估。红测试：`recordings-replay-stage` R1(1)/R1(2)/次要10 三例。
 
 ### T14 全量验收 ✅
 
@@ -229,3 +251,4 @@ T0（依赖+补丁）→ T1（API）→ T2（成员数据）
 | 评审人 | 日期 | 结论 | 备注 |
 |--------|------|------|------|
 | （待评审） | | | |
+

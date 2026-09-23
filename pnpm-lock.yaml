@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  mpegts.js@1.8.2: 8f0c6f9de1ff79ef85038514429dc3ae85bb51775552a3a3686c4d45be4c7b3f
+  mpegts.js@1.8.2: 96e4f3cf0c7475d9cc630bc663dd40b3629aa6f6930f32919210c1444e42043c
 
 importers:
 
@@ -22,7 +22,7 @@ importers:
         version: 1.3.26(react@19.2.8)
       mpegts.js:
         specifier: 1.8.2
-        version: 1.8.2(patch_hash=8f0c6f9de1ff79ef85038514429dc3ae85bb51775552a3a3686c4d45be4c7b3f)
+        version: 1.8.2(patch_hash=96e4f3cf0c7475d9cc630bc663dd40b3629aa6f6930f32919210c1444e42043c)
       next:
         specifier: 16.3.5
         version: 16.3.5(@babel/core@7.29.7(supports-color@10.2.2))(@types/node@22.20.4)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -4973,7 +4973,7 @@ snapshots:
 
   minimist@1.2.8: {}
 
-  mpegts.js@1.8.2(patch_hash=8f0c6f9de1ff79ef85038514429dc3ae85bb51775552a3a3686c4d45be4c7b3f):
+  mpegts.js@1.8.2(patch_hash=96e4f3cf0c7475d9cc630bc663dd40b3629aa6f6930f32919210c1444e42043c):
     dependencies:
       es6-promise: 4.2.8
       events: 3.3.0

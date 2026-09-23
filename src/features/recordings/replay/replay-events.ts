@@ -70,7 +70,12 @@ interface Inflight {
  * 代次 last-wins + 窗口过半预取。以 store 形态实现便于单测，`useReplayEvents` 负责接线 React。
  */
 export function createReplayEventsStore(options: CreateReplayEventsStoreOptions): ReplayEventsStore {
-  const { roomId, startMs, endMs = null } = options;
+  const { roomId, endMs = null } = options;
+  // startMs 非法（NaN/undefined）视为禁用取数，避免 toIso(NaN) 抛错被吞成 error（审核次要3）
+  const startMs =
+    options.startMs !== null && options.startMs !== undefined && Number.isFinite(options.startMs)
+      ? options.startMs
+      : null;
   const fetchEvents = options.fetchEvents ?? ((params: FetchEventsParams) => fetchLiveEvents(params));
 
   const cache = new Map<string, LiveEvent[]>();
@@ -132,6 +137,7 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
       try {
         const collected: LiveEvent[] = [];
         let page = 1;
+        let hitCap = false;
         for (;;) {
           const response = await fetchEvents({
             roomId,
@@ -143,10 +149,20 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
           });
           if (controller.signal.aborted) return false;
           collected.push(...response.items);
-          if (collected.length >= response.total || response.items.length === 0 || page >= MAX_WINDOW_PAGES) {
+          // 拉全判定：页不满（末页启发式）/ 明确 total 已满即停；total 缺失(≤0) 时不得提前 break（审核次要3）
+          const totalKnown = response.total > 0;
+          const pageFull = response.items.length >= WINDOW_PAGE_SIZE;
+          if (!pageFull || (totalKnown && collected.length >= response.total)) break;
+          if (page >= MAX_WINDOW_PAGES) {
+            hitCap = true;
             break;
           }
           page += 1;
+        }
+        // 触及翻页上限仍可能有剩余 → 显性失败，绝不静默截断（审核次要3）
+        if (hitCap) {
+          console.warn(`[recordings] 弹幕窗口翻页达上限 ${MAX_WINDOW_PAGES}，判定为异常，置错误态`);
+          return false;
         }
         if (controller.signal.aborted) return false;
         cache.set(key, collected);
@@ -160,7 +176,8 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
         if (cause instanceof ApiError && cause.kind === "network") return false;
         return false;
       } finally {
-        inflight.delete(key);
+        // 归属比对：仅删除属于本控制器的在途记录，避免被取代的旧请求误删新请求（审核次要3）
+        if (inflight.get(key)?.controller === controller) inflight.delete(key);
       }
     })();
 

@@ -89,7 +89,9 @@ export function windowIndexFor(offsetMs: number): number {
 /**
  * 窗口的绝对时间边界：
  * - 起点 `recordStartMs + index * WINDOW_MS`；
- * - 终点 `min(起点 + WINDOW_MS, recordEnd)`；`recordEnd` 未知时以 `recordStart + 12h` 为上界；
+ * - 终点 `min(起点 + WINDOW_MS, recordEnd)`；`recordEnd` 未知时**不设绝对上限**，直接给完整
+ *   10min 窗口——12h 是上游「单次查询区间」上限而非录制时长上限（审核次要2：否则未知终点 +
+ *   录制 >12h 时 index ≥ 72 的窗口 endMs ≤ startMs，弹幕被静默拉空）；
  * - `recordEnd` 早于起点 → 空窗（`endMs <= startMs`，调用方跳过请求）。
  */
 export function windowBounds(
@@ -100,8 +102,9 @@ export function windowBounds(
   const safeIndex = Number.isFinite(index) && index > 0 ? Math.floor(index) : 0;
   const startMs = recordStartMs + safeIndex * WINDOW_MS;
   const hasEnd = recordEndMs != null && Number.isFinite(recordEndMs) && recordEndMs > recordStartMs;
-  const upper = hasEnd ? (recordEndMs as number) : recordStartMs + MAX_RANGE_MS;
-  const endMs = Math.min(startMs + WINDOW_MS, upper);
+  const endMs = hasEnd
+    ? Math.min(startMs + WINDOW_MS, recordEndMs as number)
+    : startMs + WINDOW_MS;
   return { startMs, endMs };
 }
 

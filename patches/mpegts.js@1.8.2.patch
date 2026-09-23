@@ -3,7 +3,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..436deea88577bb161973e614f214842687fa4025
 --- /dev/null
 +++ b/dist/mpegts-byte-offset-seek.js
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,247 @@
 +/*
 + * Licensed under the Apache License, Version 2.0 (the "License");
 + * you may not use this file except in compliance with the License.
@@ -66,6 +66,9 @@ index 0000000000000000000000000000000000000000..436deea88577bb161973e614f2148426
 +const LAZY_LOAD_GUARD_TIMEOUT_MS = 3000;
 +// 触发 guard 恢复的事件（先到为准）：新流首个媒体段到达即说明时间轴已切换
 +const GUARD_RELEASE_EVENTS = ['media_segment', 'recommend_seekpoint'];
++// 落位对齐容差（秒）：仅修正 PTS/CTS 造成的**小幅**前偏；位移过大说明覆盖该时间点的是
++// 旧区间（回退 seek 后旧缓冲尚未移除），此时夹到旧区间起点会把播放头拽回错误位置（审核次要9）
++const SEEK_ALIGN_TOLERANCE_SECONDS = 3;
 +
 +// 可重入 guard 状态：按 config 维度记录当前激活的 guard（同一引擎连续 seek 共用同一 guard）
 +const lazyLoadGuards = new WeakMap();
@@ -84,14 +87,21 @@ index 0000000000000000000000000000000000000000..436deea88577bb161973e614f2148426
 +    if (finished) return;
 +    finished = true;
 +    config.lazyLoad = previous;
-+    if (canOff) {
-+      for (const event of GUARD_RELEASE_EVENTS) transmuxer.off(event, finish);
++    try {
++      if (canOff) {
++        for (const event of GUARD_RELEASE_EVENTS) transmuxer.off(event, finish);
++      }
++    } catch (e) {
++      // destroy 后 transmuxer.off 可能抛错：吞掉并继续清理——
++      // 若让异常中断，timer 与 lazyLoadGuards 注册表都不会释放 → guard 永不释放，
++      // 后续 seek 复用 finished 的旧 guard，lazyLoad 防死锁保护整体失效（审核次要9）
++    } finally {
++      if (timer !== null) {
++        clearTimeout(timer);
++        timer = null;
++      }
++      lazyLoadGuards.delete(config);
 +    }
-+    if (timer !== null) {
-+      clearTimeout(timer);
-+      timer = null;
-+    }
-+    lazyLoadGuards.delete(config);
 +  };
 +
 +  const armTimer = () => {
@@ -150,7 +160,9 @@ index 0000000000000000000000000000000000000000..436deea88577bb161973e614f2148426
 +        for (let i = 0; i < buffered.length; i++) {
 +          if (buffered.end(i) > el.currentTime) {
 +            const start = buffered.start(i);
-+            if (el.currentTime < start) el.currentTime = start;
++            if (el.currentTime < start && start - el.currentTime <= SEEK_ALIGN_TOLERANCE_SECONDS) {
++              el.currentTime = start;
++            }
 +            break;
 +          }
 +        }

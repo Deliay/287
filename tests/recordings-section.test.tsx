@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
-import { RecordingsSection } from "@/features/recordings/recordings-section";
+import { RecordingsSection, sortRecordings } from "@/features/recordings/recordings-section";
 import { LiveStatusGrid } from "@/features/recordings/live-status-grid";
 import type { RecordingStatusItem } from "@/features/recordings/types";
 import { theme } from "@/theme";
@@ -252,6 +252,213 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
     expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
+  });
+
+  it("R4 加载完成后可收起：列表隐藏且 aria-expanded=false，再展开复用数据不重新取数", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    const header = screen.getByTestId("recordings-group-viridis").querySelector("button");
+    expect(header).toHaveAttribute("aria-expanded", "true");
+
+    // 收起：内容必须隐藏，ARIA 与可见性一致
+    fireEvent.click(header as HTMLElement);
+    expect(screen.queryByText("游玩饥荒")).not.toBeInTheDocument();
+    expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+
+    // 再展开：原数据回来且不重新取数
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
+    expect(screen.getByText("游玩饥荒")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("次要5 statusKind=error 时分组给出错误态，而非永远「等待直播状态」", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(<RecordingsSection items={[]} statusKind="error" />);
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await flushMicrotasks();
+
+    expect(screen.getByText(/直播状态获取失败/)).toBeInTheDocument();
+    expect(screen.queryByText(/等待直播状态/)).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("次要5 状态卡片键盘可达：聚焦 + Enter 展开定位分组", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("recording-status")) {
+        return Promise.resolve(jsonResponse({ items: statusItems }));
+      }
+      return Promise.resolve(
+        jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <RecordingsSection items={statusItems} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
+
+    const card = screen.getByTestId("live-card-viridis");
+    expect(card).toHaveAttribute("tabindex", "0");
+    fireEvent.keyDown(card, { key: "Enter" });
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
+    );
+  });
+
+  it("次要6 状态就绪后 observer 回调与补跑 effect 双触发只取一次数", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    const tree = (items: RecordingStatusItem[], statusKind: "loading" | "ok") => (
+      <MantineProvider theme={theme}>
+        <RecordingsSection items={items} statusKind={statusKind} />
+      </MantineProvider>
+    );
+    const { rerender } = rtlRender(tree([], "loading"));
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    }); // 视口触发 → 等待状态，未取数
+    await flushMicrotasks();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    rerender(tree(statusItems, "ok")); // 状态就绪 → 补跑（取数1 次）
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    // 真实 IntersectionObserver 在（重建后）observe 时即回调一次 → 再次 intersect 不得重复取数
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await flushMicrotasks();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+  });
+
+  it("次要6 分组加载失败后，状态卡片再次定位会重试该分组", async () => {
+    let recordingsAttempts = 0;
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("recording-status")) {
+        return Promise.resolve(jsonResponse({ items: statusItems }));
+      }
+      recordingsAttempts += 1;
+      if (recordingsAttempts === 1) {
+        // 首次取该分组失败
+        return Promise.resolve(new Response("boom", { status: 500 }));
+      }
+      return Promise.resolve(
+        jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <RecordingsSection items={statusItems} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-group-viridis").textContent).toContain("加载失败"),
+    );
+
+    fireEvent.click(screen.getByTestId("live-card-viridis"));
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    const recordingsCalls = fetchMock.mock.calls.filter((call) =>
+      String(call[0]).includes("/api/b/live/1001/recordings"),
+    );
+    expect(recordingsCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("次要6 roomId 漂移后旧列表链接仍指向其数据来源房间", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    const tree = (items: RecordingStatusItem[]) => (
+      <MantineProvider theme={theme}>
+        <RecordingsSection items={items} />
+      </MantineProvider>
+    );
+    const { rerender } = rtlRender(tree(statusItems));
+    await act(async () => {
+      MockIntersectionObserver.instances[0]?.trigger();
+    });
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    expect(
+      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
+    ).toContain("roomId=1001");
+
+    // 30s 轮询后房间号漂移：列表仍是 1001 的数据 → 链接不得被改成新房间
+    const drifted = statusItems.map((item) =>
+      item.mid === 1891335475 ? { ...item, roomId: 9999 } : item,
+    );
+    rerender(tree(drifted));
+    expect(
+      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
+    ).toContain("roomId=1001");
+    expect(
+      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
+    ).not.toContain("roomId=9999");
+  });
+
+  it("次要6 sortRecordings 对空串 startedAt 回退 createdAt 排序", () => {
+    const files = [
+      {
+        name: "a",
+        size: 1,
+        createdAt: "2026-09-20T20:00:00.000Z",
+        info: { recordingId: "r", title: "A", mid: 1, startedAt: "", endedAt: "" },
+      },
+      {
+        name: "b",
+        size: 1,
+        createdAt: "2026-09-01T20:00:00.000Z",
+        info: {
+          recordingId: "r",
+          title: "B",
+          mid: 1,
+          startedAt: "2026-09-15T20:00:00.000Z",
+          endedAt: "2026-09-15T22:00:00.000Z",
+        },
+      },
+    ];
+    expect(sortRecordings(files).map((file) => file.name)).toEqual(["a", "b"]);
   });
 
   it("次要6 状态卡片点击（按钮以外区域）展开并定位对应录播分组", async () => {

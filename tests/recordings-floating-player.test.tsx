@@ -133,4 +133,32 @@ describe("悬浮播放组件 FloatingAudioPlayer（T4 / AC-8）", () => {
     expect(video).toBeInTheDocument();
     expect(video?.getAttribute("data-lane-media")).toBe("true");
   });
+
+  it("次要4 stop/stopAll 后宿主不残留孤儿 <video> 节点", async () => {
+    const { factory } = fakeFactory();
+    restore = setLivePlayerFactory(factory);
+
+    const { rerender } = renderWithTheme(<FloatingAudioPlayer />);
+    act(() => {
+      audioRegistry.play(101, meta);
+    });
+    rerender(<FloatingAudioPlayer />);
+    const host = screen.getByTestId("floating-audio-host");
+    expect(host.querySelectorAll("video")).toHaveLength(1);
+
+    act(() => {
+      audioRegistry.stop(101);
+    });
+    rerender(<FloatingAudioPlayer />);
+    expect(host.querySelectorAll("video")).toHaveLength(0);
+
+    // 反复收听/停止不累积
+    act(() => {
+      audioRegistry.play(101, meta);
+      audioRegistry.play(102, { label: "枝堇", colorKey: "sumire" });
+      audioRegistry.stopAll();
+    });
+    rerender(<FloatingAudioPlayer />);
+    expect(host.querySelectorAll("video")).toHaveLength(0);
+  });
 });
