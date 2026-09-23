@@ -1,10 +1,10 @@
 # Cloudflare 部署支持 · 技术实现计划
 
-- 版本：v1.0
+- 版本：v1.1（开发完成后回填验收结果）
 - 创建日期：2026-09-23
 - 对应技术方案：[docs/engineering/proposal/2026-09-23-cloudflare-deploy.md](../proposal/2026-09-23-cloudflare-deploy.md)
 - 对应需求文档：[docs/product/requirement/2026-09-23-cloudflare-deploy.md](../../product/requirement/2026-09-23-cloudflare-deploy.md)
-- 状态：待评审
+- 状态：已评审通过（人工节点「审核实现文档」2026-09-23 完成审核），任务 T0–T5 已全部完成
 
 > 前置状态：需求文档与技术方案已提交需求总分支 `feat/cloudflare-deploy`（PR #2）；本计划以技术方案评审通过为执行前提。
 > 每个任务遵循红-绿-重构循环：先写失败测试 → 最小实现使其通过 → 重构保持全绿。
@@ -12,7 +12,7 @@
 
 ## 1. 任务拆解
 
-### T0 部署配置一致性测试（红）
+### T0 部署配置一致性测试（红）✅
 
 - 新增 `tests/deploy-config.test.ts`，全部用例 initially 失败（`wrangler.toml` 尚不存在、`package.json` 尚无对应脚本与依赖）。
 - **测试用例（红）**：
@@ -24,14 +24,14 @@
 - 验证：运行 `pnpm test`，确认新用例**因预期原因失败**（文件缺失/字段缺失），既有用例保持绿色。
 - 预计：0.5h。
 
-### T1 静态导出构建配置（绿 · 部分）
+### T1 静态导出构建配置（绿 · 部分）✅
 
 - 修改 `next.config.ts`：增加 `output: "export"` 与 `images: { unoptimized: true }`（理由见技术方案 §3：静态导出不支持 `next/image` 运行时优化，站点图片已预置为 avif）。
 - **TDD 循环**：使 T0 用例 4 转绿；`pnpm test` 全量回归（既有组件/页面测试不受构建配置影响）。
 - 涉及文件：`next.config.ts`。
 - 预计：0.25h。
 
-### T2 wrangler 配置文件（绿 · 部分）
+### T2 wrangler 配置文件（绿 · 部分）✅
 
 - 新增 `wrangler.toml`：
 
@@ -47,7 +47,7 @@
 - 涉及文件：`wrangler.toml`（新增）。
 - 预计：0.25h。
 
-### T3 部署工具链脚本与依赖（绿 · 完成）
+### T3 部署工具链脚本与依赖（绿 · 完成）✅
 
 - `package.json`：
   - `devDependencies` 增加 `wrangler`（执行 `pnpm add -D wrangler`，由 pnpm-lock 锁定版本）。
@@ -60,7 +60,7 @@
 - 涉及文件：`package.json`、`pnpm-lock.yaml`。
 - 预计：0.5h。
 
-### T4 构建产物验证与重构
+### T4 构建产物验证与重构 ✅
 
 - 执行 `pnpm run build`，确认：
   - 构建成功且产出 `out/` 目录；
@@ -71,7 +71,7 @@
 - 涉及文件：视验证结果而定（预期无新增改动）。
 - 预计：0.5h。
 
-### T5 全量回归与部署验收
+### T5 全量回归与部署验收 ✅
 
 - 全量回归：`pnpm test`、`pnpm run lint`、`pnpm run dev`（可启动）、`pnpm run build` 全部正常（验收标准 6）。
 - 本地预览验收：执行 `pnpm run preview`，浏览器访问 wrangler dev 输出的本地地址，确认页面与构建产物一致（验收标准 4）。
@@ -109,7 +109,19 @@ T0（红：测试先行）→ T1（next.config）→ T2（wrangler.toml）→ T3
 
 | 验收标准 | 结果 | 说明 |
 |----------|------|------|
-| 1–7 | （待回填） | - |
+| 1. wrangler 本地可用 | ✅ 通过 | `pnpm exec wrangler --version` → 4.136.1（devDependency，未全局安装） |
+| 2. 部署地址可访问 | ✅ 通过 | 本机无 Cloudflare 凭据，以 `wrangler deploy --temporary`（临时预览账号）完成部署，地址 `https://287-fan-site.earthy-tern.workers.dev`，首页返回 200 且 `<title>287 应援站</title>`；正式凭据部署由维护者 `wrangler login` 后执行 `pnpm run deploy` 复验 |
+| 3. 页面/图片无 404 | ✅ 通过 | `out/` 含 `index.html`、5 个 svg、4 个 `images/members/*.avif`；线上逐一请求首页/4 张立绘/5 个 svg/favicon/JS/CSS 共 22 项资源全部 200（后续重复 curl 返回 403 为 Cloudflare 反机器人挑战页，非资源缺失，浏览器访问不受影响） |
+| 4. 预览脚本可用 | ✅ 通过 | `pnpm run preview` → `wrangler dev` Ready on http://localhost:8787，`/` 与 `/images/members/viridis.avif` 均 200 |
+| 5. 配置入库且无密钥 | ✅ 通过 | `wrangler.toml` 仅 `name` / `compatibility_date` / `assets.directory`，T0 用例 1 白名单 + 敏感字段名断言通过；`.wrangler/` 本地状态已加入 `.gitignore` |
+| 6. 现有流程不破坏 | ✅ 通过 | `pnpm test` 30/30、`pnpm run lint` 无告警、`pnpm run dev` 首页 200、`pnpm run build` 成功产出 `out/` |
+| 7. 新增部署配置测试 | ✅ 通过 | `tests/deploy-config.test.ts` 4 个用例全绿（先红后绿，红阶段 4 例均因预期原因失败） |
+
+**实施偏差记录**（相对本计划的最小偏差）：
+
+1. `pnpm-workspace.yaml` 的 `allowBuilds` 新增 `esbuild: true`、`workerd: true`：wrangler 依赖的这两个包需要执行 postinstall 下载二进制，否则 pnpm 报 `ERR_PNPM_IGNORED_BUILDS` 并使 `pnpm exec wrangler` 触发的依赖状态检查失败（验收标准 1 的必要条件）。
+2. `.gitignore` 新增 `.wrangler/`：`wrangler dev` 会在仓库根目录生成本地 miniflare 状态目录，不属于部署配置，不应入库（验收标准 5 的必要条件）。
+3. 未增加 `build:cf` 别名（技术方案标注可选），保持最小变更。
 
 ## 4. 评审记录
 
