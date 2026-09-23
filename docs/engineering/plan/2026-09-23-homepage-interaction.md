@@ -189,3 +189,9 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | 问题 | 处置 | 用例 |
 |------|------|------|
 | R1 面板结构改造后 `a.panelLink` 设 `z-index: 1`，`span.bar` 仍为 `z-index: auto` 被压到立绘图层之下（代表色指示条被遮挡，一期视觉回归） | 沿用一期「指示条恒在最上层」的视觉约定：`.bar` 提升 `z-index: 3`（高于 panelLink=1、meta=2；bar 位于面板底部 4px，与 meta 不重叠） | `hero-wall.test.tsx` 新增 CSS 结构断言：读取 `hero-wall.module.css`，`.bar` 规则须声明 `z-index` 且数值高于 `.panelLink`（先红后绿） |
+
+### 返工记录（第三轮，2026-09-23，Review R2）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| R2/R1 修复副作用：`.bar` 提升 `z-index: 3` 后位于覆盖式锚点之上且未设 `pointer-events`，成为命中测试拦截层——面板底部 4px 条带点击既不激活锚点也无任何处理（点击死区），违反技术方案 §4.3「点面板任意处进介绍区」 | 采用建议 a：`.bar` 为纯装饰元素，增加 `pointer-events: none`，点击穿透到 `a.panelLink`；hover 灰化经 `.panel`/`.wall` 的 `:hover` 链不受影响（命中目标下移仍在面板内） | 扩展 `hero-wall.test.tsx` 既有「层叠结构」用例：`.bar` 规则须含 `pointer-events: none`（先红后绿） |

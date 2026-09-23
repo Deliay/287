@@ -133,4 +133,15 @@ describe("首屏立绘墙 HeroWall 层叠结构（R1 回归防护）", () => {
       linkZ ? Number(linkZ[1]) : 0,
     );
   });
+
+  it("代表色指示条 .bar 声明 pointer-events: none，条带点击不成为死区（R2 回归防护）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/hero-wall.module.css"),
+      "utf8",
+    );
+    const barBody = ruleBody(css, "bar");
+
+    // .bar 层叠在覆盖式锚点之上：必须关闭指针事件让点击穿透到 a.panelLink
+    expect(barBody).toMatch(/pointer-events:\s*none/);
+  });
 });
