@@ -5,9 +5,16 @@ import Lenis from "lenis";
 import Snap from "lenis/snap";
 import { getLenis, setLenis } from "@/lib/lenis";
 
-/** 吸附点 = 介绍区中心 - 半个视口，使页面停在介绍区正中 */
+/**
+ * 吸附点 = 介绍区中心 - 半个视口，使页面停在介绍区正中。
+ * 用 getBoundingClientRect + scrollY（相对视口换算到文档坐标），
+ * 不用 offsetTop：后者相对 offsetParent，出现定位祖先即会算错。
+ */
 function sectionCenter(section: HTMLElement): number {
-  return section.offsetTop + section.offsetHeight / 2 - window.innerHeight / 2;
+  const rect = section.getBoundingClientRect();
+  return (
+    rect.top + window.scrollY + rect.height / 2 - window.innerHeight / 2
+  );
 }
 
 /**

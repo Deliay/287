@@ -44,13 +44,13 @@
 - 文件：`src/lib/live-status.ts`（新增）、`tests/live-status.test.ts`（新增）
 - 内容：
   - `export interface LiveStatus { living: boolean; title: string | null }`
-  - `fetchLiveStatus(memberId): Promise<LiveStatus>`：按环境拼接 base（`process.env.NODE_ENV === "development"` 走相对路径 `/api/live/...`，否则直连 `https://api.sumire.live`）；模块级 `Map<memberId, Promise<LiveStatus>>` 缓存，**失败结果也缓存**（避免重复打挂接口）；5s `AbortSignal.timeout`；防御性解析——按实测结构 `{"ok":true,"status":{"live":boolean,"title":string}}` 取 `status.live`/`status.title`，字段缺失/类型不符/网络错误/非 2xx 一律 resolve `{ living: false, title: null }`，绝不抛异常。
+  - `fetchLiveStatus(memberId): Promise<LiveStatus>`：按环境拼接 base（`process.env.NODE_ENV === "development"` 走相对路径 `/api/live/...`，否则直连 `https://api.sumire.live`）；模块级 `Map<memberId, Promise<LiveStatus>>` 缓存，**失败结果也缓存**（避免重复打挂接口）；5s `AbortSignal.timeout`；防御性解析——按实测结构 `{"ok":true,"status":{"live":boolean,"title":string}}` 取 `status.live`/`status.title`，字段缺失/类型不符/**取值无效（`title` 为空或纯空白）**/网络错误/非 2xx 一律 resolve `{ living: false, title: null }`，绝不抛异常。
   - `useLiveStatus(memberId): { status: LiveStatus | null }`（`null` = 加载中）：Client Hook，mount 时调用 `fetchLiveStatus` 并 setState。
 - TDD（mock 全局 `fetch`）：
   - 红/绿用例清单：
     1. 开播响应（`live:true` + title）→ resolve `{ living: true, title }`；
     2. 未开播响应（`live:false`）→ resolve `{ living: false, title: null }`；
-    3. fetch reject / 非 2xx / 畸形 JSON / 字段缺失 → 均 resolve 未开播态且不抛出（AC-4）；
+    3. fetch reject / 非 2xx / 畸形 JSON / 字段缺失 → 均 resolve 未开播态且不抛出（AC-4）；**`live:true` 但 `title` 为空/纯空白字符串同样降级未开播**（Review 返工 P2-1，避免渲染内容为空的开播链接）；
     4. 同 memberId 连续两次调用，`fetch` 只被调用一次，两个 Promise 同一结果（AC-5 单次请求）；
     5. 不同 memberId 各自独立请求；
     6. base 拼接：mock `NODE_ENV` 为 development 时请求相对路径，production 时请求 `https://api.sumire.live` 绝对地址；
@@ -75,14 +75,15 @@
 
 ### T5 HeroWall 锚点跳转改造 + 首屏徽章（src/components/hero-wall.tsx）
 
-- 文件：`src/components/hero-wall.tsx`、`hero-wall.module.css`（徽章位置样式）、`tests/hero-wall.test.tsx`（改）
+- 文件：`src/components/hero-wall.tsx`、`hero-wall.module.css`（面板结构与徽章槽样式）、`tests/hero-wall.test.tsx`（改）
 - 内容：
-  - `<a>` 的 `href` 改为 `#member-{id}`，**移除** `target="_blank"` 与 `rel`；保留 Server Component（不引交互逻辑，锚点平滑滚动由 T6 全局监听处理）。
+  - 每格改为 **`div.panel` 容器 + 覆盖式 `a.panelLink[href="#member-{id}"]`（absolute inset:0 铺满面板，内含立绘）**，**移除** `target="_blank"` 与 `rel`；meta 区（徽章 + 名字）为锚点的兄弟节点：`pointer-events: none` 让点击穿透到下方锚点，徽章槽 `pointer-events: auto` 保持徽章可点。保留 Server Component（不引交互逻辑，锚点平滑滚动由 T6 全局监听处理）。
+  - **禁止 `<a>` 嵌套 `<a>`**：开播态 LiveBadge 自身是 `<a>`，不得放入面板锚点子树（HTML 内容模型 + React validateDOMNesting + SSR 解析器拆链，Review P1-1）。
   - meta 区成员名字**上方**嵌入 `<LiveBadge member={member} />`。
 - TDD（先改既有测试为红）：
-  1. 四项 `href` 依次为 `#member-viridis/#member-komichi/#member-chu2u/#member-sumire`，且无 `target="_blank"`（替换原 B 站直链断言，AC-1）；
-  2. 每个面板内渲染 LiveBadge（mock LiveBadge 为桩组件，断言每面板一个且位于名字之前——`compareDocumentPosition` 或 DOM 顺序断言，AC-2）；
-  3. 既有立绘 alt、hover class、名称可读用例保持绿色。
+  1. 四项面板锚点 `href` 依次为 `#member-viridis/#member-komichi/#member-chu2u/#member-sumire`，且无 `target="_blank"`（AC-1）；
+  2. **不 mock LiveBadge**（改 mock `@/lib/live-status` 返回开播态，用真实组件）：断言 `container.querySelector("a a")` 为 `null`（P1-1 回归用例），且每面板一个徽章、位于名字之前（DOM 顺序断言，AC-2）；
+  3. 既有立绘 alt、hover class、名称可读用例改挂到 `div.panel` 后保持绿色。
 - 依赖：T4。
 
 ### T6 lenis 锚点平滑滚动（src/lib/lenis.ts）
@@ -110,7 +111,7 @@
 
 - 文件：`src/components/smooth-scroll.tsx`、`src/app/globals.css`（或对应样式文件，移动端 scroll-snap）、`tests/smooth-scroll.test.tsx`（扩展）
 - 内容：
-  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("section[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；选择器限定 `section` 元素，避免误命中介绍区标题 `id="member-{id}-heading"`（实现期细化，2026-09-23）；吸附类型取 `proximity`：仅在接近介绍区中心（默认阈值 50% 视口）时吸附，首屏小幅度滚动不会被强行拽走，同时满足 AC-6 越过半屏即落位；`resize` 时重算；卸载时清理。
+  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("section[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；选择器限定 `section` 元素，避免误命中介绍区标题 `id="member-{id}-heading"`（实现期细化，2026-09-23）；偏移量按技术方案 §3.3 用 **`getBoundingClientRect().top + window.scrollY`** 计算（**不用 `offsetTop`**：它相对 `offsetParent`，一旦出现定位祖先即算错，Review 返工 P2-2）；吸附类型取 `proximity`：仅在接近介绍区中心（默认阈值 50% 视口）时吸附，首屏小幅度滚动不会被强行拽走，同时满足 AC-6 越过半屏即落位；`resize` 时重算；卸载时清理。
   - 移动端（< 48em，不启用 lenis）：介绍区容器 CSS `scroll-snap-type: y proximity` + 各 section `scroll-snap-align: center`（proximity 保跟手性，对应 AC-7）。
   - 若开发时发现 lenis 1.3.26 snap API 与预期不符或联调抖动：回退为 PC 也用 CSS scroll-snap，lenis 仅保留阻尼（技术方案 §5-1 既定取舍），此变更需回本文件标记。
 - TDD：
@@ -123,6 +124,7 @@
 ### T9 回归与整体验收
 
 - 内容：`pnpm test`、`pnpm lint`、`pnpm build` 全绿（AC-8）；人工验收：真实接口开播/未开播切换、开发代理可用性（T1）、吸附手感、徽章视觉截断。
+- 返工补充（2026-09-23 Review）：新增集成用例 `tests/live-status-integration.test.tsx`——HeroWall + 4×MemberSection 同页渲染 8 枚徽章只产生 4 次请求且同成员状态一致（AC-5 缓存共享回归，Review P2-3）。
 - 依赖：全部任务完成。
 
 ## 4. 执行顺序与依赖图
@@ -171,4 +173,13 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 | T6 lenis 锚点平滑滚动 | ☑ | 拦截收敛在 SmoothScroll 的 document 点击监听；`event.defaultPrevented` 与「最近祖先链接非 #」两种情况均放行 |
 | T7 MemberSection 锚点 + 徽章 | ☑ | `id="member-{id}"` + 徽章位于 cta 上方 |
 | T8 逐屏吸附滚动 | ☑ | 选择器细化为 `section[id^='member-']`（见 T8 条目说明）；移动端 CSS proximity + section center 结构断言全绿 |
-| T9 回归与整体验收 | ☑ | `pnpm test`（54 用例）、`pnpm lint`、`pnpm build` 全绿；开发代理与 SSR 结构（锚点/section id/徽章骨架）已点验。**人工验收待人类执行**：真实接口开播态视觉、PC 吸附手感、移动端真机触屏手感 |
+| T9 回归与整体验收 | ☑ | `pnpm test`（初版 54 用例，返工后 **56 用例**）、`pnpm lint`、`pnpm build` 全绿；开发代理与 SSR 结构（锚点/section id/徽章骨架/无嵌套链接）已点验。**人工验收待人类执行**：真实接口开播态视觉、PC 吸附手感、移动端真机触屏手感 |
+
+### 返工记录（2026-09-23，Review 打回 P1-1 / P2 系列）
+
+| 问题 | 处置 | 用例 |
+|------|------|------|
+| P1-1 面板 `<a>` 内嵌开播态徽章 `<a>`（无效嵌套） | 采用建议 b+c：面板改 `div.panel` + 覆盖式 `a.panelLink`，徽章槽移到锚点子树之外；点击分层用 `pointer-events` 实现 | T5 用例改为**不 mock LiveBadge**，断言 `querySelector("a a")` 为 `null` |
+| P2-1 `parseStatus` 空标题判为开播 | 空/纯空白 `title` 降级未开播（与方案「取值无效即降级」一致） | live-status 新增空标题用例 |
+| P2-2 `sectionCenter` 用 `offsetTop` 偏离方案 | 改为 `getBoundingClientRect().top + window.scrollY` | smooth-scroll 用例改 stub rect，吸附点断言回归 |
+| P2-3 缺少缓存共享集成用例 | 新增 `tests/live-status-integration.test.tsx` | 8 徽章 / 4 请求 / 状态一致 |

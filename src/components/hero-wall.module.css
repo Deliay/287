@@ -20,6 +20,14 @@
   transition: filter 300ms ease-out;
 }
 
+/* 覆盖式站内锚点：铺满面板承接点击（面板内除徽章外的点击都落到此处） */
+.panelLink {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+}
+
 .art {
   object-fit: cover;
   object-position: top;
@@ -30,6 +38,7 @@
 .meta {
   position: absolute;
   inset: auto 0 4px 0;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   gap: var(--mantine-spacing-xs);
@@ -40,6 +49,14 @@
     color-mix(in srgb, var(--mantine-color-night287-9) 85%, transparent),
     transparent
   );
+  /* meta 叠在覆盖式锚点之上：默认点击穿透到锚点（点名字/渐变也进介绍区） */
+  pointer-events: none;
+}
+
+/* 徽章槽单独恢复指针事件，保证开播徽章可点、且不会被面板锚点抢走点击 */
+.badgeSlot {
+  align-self: flex-start;
+  pointer-events: auto;
 }
 
 .name {

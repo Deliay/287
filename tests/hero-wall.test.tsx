@@ -5,11 +5,12 @@ import styles from "@/components/hero-wall.module.css";
 import { members } from "@/data/members";
 import { renderWithTheme } from "./utils";
 
-// LiveBadge 由 tests/live-badge.test.tsx 单独覆盖，此处用桩组件断言装配关系
-vi.mock("@/components/live-badge", () => ({
-  LiveBadge: ({ member }: { member: { id: string } }) => (
-    <span data-testid="live-badge" data-member-id={member.id} />
-  ),
+// 用**真实** LiveBadge 验证嵌套结构（P1-1 回归盲区正是桩组件造成的），
+// 只打桩其数据源：四人开播 → 每枚徽章都渲染为外链 <a>
+vi.mock("@/lib/live-status", () => ({
+  useLiveStatus: (memberId: string) => ({
+    status: { living: true, title: `直播中-${memberId}` },
+  }),
 }));
 
 const ANCHOR_LINKS = [
@@ -19,35 +20,57 @@ const ANCHOR_LINKS = [
   "#member-sumire",
 ];
 
+/** 站内锚点（面板跳转） */
+function panelLinks(): HTMLElement[] {
+  return screen
+    .getAllByRole("link")
+    .filter((link) => (link.getAttribute("href") ?? "").startsWith("#"));
+}
+
+/** 开播徽章外链 */
+function badgeLinks(): HTMLElement[] {
+  return screen
+    .getAllByRole("link")
+    .filter((link) => (link.getAttribute("href") ?? "").startsWith("http"));
+}
+
 describe("首屏立绘墙 HeroWall", () => {
   it("按 members 顺序渲染 4 个站内锚点链接（AC-1，指向介绍区）", () => {
     renderWithTheme(<HeroWall members={members} />);
-    const links = screen.getAllByRole("link");
-    expect(links.map((link) => link.getAttribute("href"))).toEqual(
+    expect(panelLinks().map((link) => link.getAttribute("href"))).toEqual(
       ANCHOR_LINKS,
     );
   });
 
-  it("成员链接不在新标签页打开（移除 target=_blank 与 rel，站内跳转）", () => {
+  it("面板锚点不在新标签页打开（移除 target=_blank 与 rel，站内跳转）", () => {
     renderWithTheme(<HeroWall members={members} />);
-    for (const link of screen.getAllByRole("link")) {
+    for (const link of panelLinks()) {
       expect(link).not.toHaveAttribute("target");
       expect(link).not.toHaveAttribute("rel");
     }
   });
 
-  it("每个面板渲染一个直播状态徽章，且位于成员名字上方（AC-2，DOM 顺序断言）", () => {
-    renderWithTheme(<HeroWall members={members} />);
-    const badges = screen.getAllByTestId("live-badge");
-    expect(badges).toHaveLength(4);
+  it("面板内不产生嵌套链接：真实开播徽章外链与面板锚点并存时无 a>a（P1-1 回归）", () => {
+    const { container } = renderWithTheme(<HeroWall members={members} />);
 
-    const links = screen.getAllByRole("link");
-    badges.forEach((badge, index) => {
-      expect(badge).toHaveAttribute("data-member-id", members[index].id);
-      const name = links[index].querySelector(`.${styles.name}`);
+    // 前置事实：四枚开播徽章确实是外链，即嵌套风险真实存在
+    expect(badgeLinks()).toHaveLength(4);
+    expect(container.querySelector("a a")).toBeNull();
+  });
+
+  it("每个面板渲染一个直播状态徽章，且位于成员名字上方（AC-2，DOM 顺序断言）", () => {
+    const { container } = renderWithTheme(<HeroWall members={members} />);
+    const panels = container.querySelectorAll(`.${styles.panel}`);
+    expect(panels).toHaveLength(4);
+
+    panels.forEach((panel, index) => {
+      const badge = panel.querySelector('a[target="_blank"]');
+      const name = panel.querySelector(`.${styles.name}`);
+      expect(badge).not.toBeNull();
       expect(name).not.toBeNull();
+      expect(badge?.textContent).toContain(`直播中-${members[index].id}`);
       // 名字紧随徽章之后出现（徽章在名字上方）
-      const position = badge.compareDocumentPosition(name as Node);
+      const position = badge!.compareDocumentPosition(name!);
       expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
   });
@@ -61,21 +84,25 @@ describe("首屏立绘墙 HeroWall", () => {
     });
   });
 
-  it("容器与每项挂载 hover 灰化所需的 CSS class（结构断言）", () => {
-    renderWithTheme(<HeroWall members={members} />);
+  it("面板容器与覆盖式锚点分别挂载 hover 灰化所需的 CSS class（结构断言）", () => {
+    const { container } = renderWithTheme(<HeroWall members={members} />);
     const wall = screen.getByRole("region", { name: "287 期成员立绘墙" });
     expect(wall).toHaveClass(styles.wall);
-    for (const link of screen.getAllByRole("link")) {
-      expect(link).toHaveClass(styles.panel);
+
+    const panels = container.querySelectorAll(`.${styles.panel}`);
+    expect(panels).toHaveLength(4);
+    for (const link of panelLinks()) {
+      expect(link).toHaveClass(styles.panelLink);
     }
   });
 
-  it("每项叠成员名称（中文名 + 罗马音）与代表色指示条，名称始终可读", () => {
+  it("每面板叠成员名称（中文名 + 罗马音）与代表色指示条，名称始终可读", () => {
     const { container } = renderWithTheme(<HeroWall members={members} />);
-    const links = screen.getAllByRole("link");
-    links.forEach((link, index) => {
-      expect(link.textContent).toContain(members[index].name);
-      expect(link.textContent).toContain(members[index].romanName);
+    const panels = container.querySelectorAll(`.${styles.panel}`);
+    expect(panels).toHaveLength(4);
+    panels.forEach((panel, index) => {
+      expect(panel.textContent).toContain(members[index].name);
+      expect(panel.textContent).toContain(members[index].romanName);
     });
     expect(container.querySelectorAll(`.${styles.bar}`)).toHaveLength(4);
   });

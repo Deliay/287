@@ -43,7 +43,8 @@ function parseStatus(payload: unknown): LiveStatus {
     return OFFLINE;
   }
   const { live, title } = status as { live?: unknown; title?: unknown };
-  if (live !== true || typeof title !== "string") {
+  // 取值无效（含空/纯空白标题）一律降级，避免渲染内容为空的开播链接
+  if (live !== true || typeof title !== "string" || title.trim() === "") {
     return OFFLINE;
   }
   return { living: true, title };

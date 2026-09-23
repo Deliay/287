@@ -38,7 +38,8 @@ src/
 │   ├── lenis.ts                # 扩展 ScrollToTop 接口：scrollTo 支持 string target（锚点）
 │   └── live-status.ts          # 新增：状态拉取与模块级缓存（每成员一次请求；按环境拼接接口 base）
 ├── components/
-│   ├── hero-wall.tsx           # 保持 Server Component：a→站内锚点；名字上方嵌入 <LiveBadge>（Client 孤岛）
+│   ├── hero-wall.tsx           # 保持 Server Component：面板改为 div + 覆盖式站内锚点 <a>（stretched link），
+│   │                           # 徽章渲染在锚点子树之外，避免 <a> 嵌套 <a>（2026-09-23 Review 返工修订）
 │   ├── member-section.tsx      # 增加 <LiveBadge>；section 增加 id 锚点
 │   ├── live-badge.tsx          # 新增：直播状态徽章（Client Component）
 │   ├── live-badge.module.css   # 新增
@@ -68,7 +69,7 @@ page.tsx (Server)
 ```
 
 - `Member` 数据增加 `liveStatusUrl`（需求 §7 四个接口地址，注意 Sumire 的地址无成员名后缀）。
-- 锚点：每个 `MemberSection` 的 `<section>` 增加 `id={`member-${member.id}`}`；HeroWall 的 `<a>` 改为 `href={`#member-${member.id}`}`，点击时若 lenis 存在则 `lenis.scrollTo(hash)` 平滑滚动，否则走原生锚点跳转。
+- 锚点：每个 `MemberSection` 的 `<section>` 增加 `id={`member-${member.id}`}`；HeroWall 每格改为「`div.panel` 容器 + 覆盖式 `a.panelLink[href='#member-{id}']`（absolute inset:0 铺满面板，含立绘）+ meta 区（徽章 + 名字，`pointer-events: none`，徽章槽 `pointer-events: auto`）」——**面板不再整体是 `<a>`，徽章与锚点是兄弟节点**，从结构上杜绝 `<a>` 嵌套 `<a>`（HTML 内容模型禁止，SSR/静态导出下解析器会拆链、React 报 validateDOMNesting）。点击时若 lenis 存在则 `lenis.scrollTo(hash)` 平滑滚动，否则走原生锚点跳转。
 
 ### 3.3 关键实现思路
 
@@ -87,7 +88,7 @@ const cache = new Map<string, Promise<LiveStatus>>();
 export function fetchLiveStatus(memberId: Member["id"]): Promise<LiveStatus>;
 ```
 
-- **防御性解析**（应对需求 §7-T2 响应结构未确认）：响应 JSON 的字段名按约定推断（如 `living`/`live_status`、`title`），任何字段缺失或类型不符都降级为 `{ living: false, title: null }`，绝不抛异常到组件层。
+- **防御性解析**（应对需求 §7-T2 响应结构未确认）：响应 JSON 的字段名按约定推断（如 `living`/`live_status`、`title`），任何字段缺失、类型不符或**取值无效（`title` 为空/纯空白字符串）**都降级为 `{ living: false, title: null }`，绝不抛异常到组件层——避免渲染出内容为空、无点击目标的开播链接（2026-09-23 Review 返工 P2-1）。
 - 请求失败（网络错误、非 2xx、超时 ~5s `AbortSignal.timeout`）同样降级为未开播态。
 - **请求地址分环境**：`members.ts` 中 `liveStatusUrl` 记录接口的**路径部分**（如 `/api/live/viridis/status`）；`live-status.ts` 拼接 base——生产环境直连 `https://api.sumire.live`（287.live 已在 CORS 白名单），开发环境走相对路径，由 `next dev` 的本地代理转发（`next.config.ts` 中开发态 `rewrites`：`/api/live/:path*` → `https://api.sumire.live/api/live/:path*`），本地开发无跨域问题。
 
@@ -115,9 +116,9 @@ export interface Member {
 
 ### 4.3 组件契约变更
 
-- `<HeroWall members={members} />`：每项 `<a>` 的 `href` 由 B 站直链改为 `#member-{id}` 站内锚点；**移除** `target="_blank"`；meta 区名字上方新增 `<LiveBadge>`。
-- `<MemberSection member index />`：`<section>` 增加 `id={`member-${member.id}`}`；内容区新增 `<LiveBadge>`。
-- `<LiveBadge member={member} />`（新增）：渲染直播状态徽章，交互见 §3.3。
+- `<HeroWall members={members} />`：每格改为 `div.panel` + 覆盖式 `a.panelLink[href="#member-{id}"]`（**移除** `target="_blank"`/`rel`）；meta 区（徽章 + 名字）位于锚点之外并以 `pointer-events` 分层保证「点面板任意处进介绍区、点徽章走直播入口」；徽章为 Client 孤岛，开播态外链与面板锚点是兄弟节点，不产生嵌套链接。
+- `<MemberSection member index />`：`<section>` 增加 `id={`member-${member.id}`}`；内容区（cta 上方）新增 `<LiveBadge>`。
+- `<LiveBadge member={member} />`（新增）：渲染直播状态徽章，交互见 §3.3；开播态为 `<a>`，因此**禁止嵌入任何已是链接的子树**（使用方须保证，见风险 #7）。
 - `<SmoothScroll />`：增加 snap 点计算逻辑，对外契约不变。
 
 ### 4.4 lenis 实例接口扩展（`src/lib/lenis.ts`）
@@ -134,6 +135,7 @@ export interface Member {
 | 4 | HeroWall 从 Server 转 Client（因 LiveBadge 交互） | 首屏 JS 体积微增 | 优先方案：HeroWall 保持 Server，仅 LiveBadge 为 Client 孤岛嵌入；点击锚点跳转用原生 `href="#..."` + lenis 全局监听 hash 点击，无需 HeroWall 客户端化 |
 | 5 | 滚动吸附与移动端触屏惯性冲突 | AC-7 不达标 | 移动端仅用 CSS `proximity` 吸附，不启用 lenis；真机验收 |
 | 6 | 既有测试断言 B 站直链跳转 | 改动后既有用例失败 | 属预期变更：按 TDD 先改测试（红）再改实现（绿），AC-1 新断言替代旧断言 |
+| 7 | ~~LiveBadge 嵌入面板 `<a>` 产生 `<a>` 内嵌 `<a>`~~ **已在实现期返工消除**（2026-09-23 Review P1-1） | 非法 HTML、React validateDOMNesting 报错、SSR 解析器拆链破坏首屏结构、AC-3 行为未定义 | 面板改 div + 覆盖式锚点，徽章移到锚点子树之外（兄弟节点）；hero-wall 用例**不 mock LiveBadge**，直接断言 `container.querySelector("a a")` 为空，堵住桩组件造成的测试盲区 |
 
 ## 6. 测试策略
 
@@ -141,11 +143,11 @@ export interface Member {
 
 | 验收标准 | 测试方式 |
 |----------|----------|
-| AC-1（站内锚点跳转） | hero-wall 单测：四项 `href` 为 `#member-{id}` 且无 `target="_blank"`；member-section 单测：section 带对应 `id` |
+| AC-1（站内锚点跳转） | hero-wall 单测：四项 `href` 为 `#member-{id}` 且无 `target="_blank"`；**不 mock LiveBadge**，断言面板内无嵌套链接（`querySelector("a a")` 为空，防 P1-1 回归）；member-section 单测：section 带对应 `id` |
 | AC-2（首屏状态徽章） | live-badge 单测：mock `fetchLiveStatus` 返回开播（断言显示标题）/未开播（断言「未开播」）/加载中三态 |
 | AC-3（徽章点击） | live-badge 单测：开播态渲染为链接且 `href` 符合 T1 结论（确认前断言默认 B 站主页）；未开播态非链接 |
 | AC-4（失败降级） | live-status 单测：fetch reject / 非 2xx / 畸形 JSON 均 resolve 为未开播态且不抛出 |
-| AC-5（一致性与单次请求） | live-status 单测：同 memberId 两次调用 fetch 只触发一次（mock fetch 计数）；hero-wall + member-section 同页渲染时共享缓存 |
+| AC-5（一致性与单次请求） | live-status 单测：同 memberId 两次调用 fetch 只触发一次（mock fetch 计数）；**集成用例**：HeroWall + 4×MemberSection 同页渲染时 8 枚徽章只产生 4 次请求且状态一致 |
 | AC-6/AC-7（吸附滚动） | smooth-scroll 单测：lenis 初始化参数包含 snap 配置（mock lenis 构造函数断言）；吸附手感与各断点实际效果**人工验收** |
 | AC-8（回归） | `pnpm test` / `pnpm lint` / `pnpm build` 全绿；既有导航、调色盘、介绍区内容用例不受影响 |
 

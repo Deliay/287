@@ -75,6 +75,16 @@ describe("直播状态拉取与缓存 live-status", () => {
       () => Promise.resolve(stubResponse({ live: true, title: "x" })),
       // 结构不符：live 为真但缺 title，整体降级
       () => Promise.resolve(stubResponse({ ok: true, status: { live: true } })),
+      // 取值无效：live 为真但 title 为空字符串 → 降级未开播（Review 返工 P2-1，避免空链接）
+      () =>
+        Promise.resolve(
+          stubResponse({ ok: true, status: { live: true, title: "" } }),
+        ),
+      // 取值无效：title 为纯空白
+      () =>
+        Promise.resolve(
+          stubResponse({ ok: true, status: { live: true, title: "   " } }),
+        ),
     ];
 
     for (const makeResponse of failureModes) {

@@ -42,13 +42,20 @@ function mountMemberSections(): () => void {
     const heading = document.createElement("h2");
     heading.id = `member-${id}-heading`;
     section.appendChild(heading);
-    // jsdom 无布局：注入等价于一屏高度的偏移量（top = index 屏）
-    Object.defineProperty(section, "offsetTop", {
-      value: index * 768,
-      configurable: true,
-    });
-    Object.defineProperty(section, "offsetHeight", {
-      value: 768,
+    // jsdom 无布局：注入等价于一屏高度的视口矩形（吸附点按 getBoundingClientRect 计算）
+    Object.defineProperty(section, "getBoundingClientRect", {
+      value: () =>
+        ({
+          top: index * 768,
+          bottom: (index + 1) * 768,
+          left: 0,
+          right: 0,
+          width: 0,
+          height: 768,
+          x: 0,
+          y: index * 768,
+          toJSON: () => ({}),
+        }) as DOMRect,
       configurable: true,
     });
     document.body.appendChild(section);
