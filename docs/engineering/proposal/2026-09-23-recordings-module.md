@@ -7,7 +7,7 @@
 ## 1. 对应上游文档
 
 - 需求：[docs/product/requirement/2026-09-23-recordings-module.md](../../product/requirement/2026-09-23-recordings-module.md)
-- 设计：`docs/product/design/2026-09-23-recordings-module.md`（待设计阶段产出；本方案中的布局结构以需求文档 FR-2/FR-4/FR-5/FR-6 为准，设计稿落地后如有出入同步修订）
+- 设计：[docs/product/design/2026-09-23-recordings-module.md](../../product/design/2026-09-23-recordings-module.md)
 - 参考实现：[Deliay/sumire](https://github.com/Deliay/sumire)（已调研，关键结论见 §5 与 §7）
 
 ## 2. 技术选型
