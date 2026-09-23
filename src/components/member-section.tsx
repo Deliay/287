@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { Member } from "@/data/members";
+import { LiveBadge } from "@/components/live-badge";
 import styles from "./member-section.module.css";
 
 export interface MemberSectionProps {
@@ -13,6 +14,7 @@ export function MemberSection({ member, index }: MemberSectionProps) {
 
   return (
     <section
+      id={`member-${member.id}`}
       className={`${styles.section} ${
         index % 2 === 0 ? styles.bgNine : styles.bgEight
       }`}
@@ -34,6 +36,7 @@ export function MemberSection({ member, index }: MemberSectionProps) {
         </h2>
         <p className={styles.subtitle}>{member.title}</p>
         <p className={styles.description}>{member.description}</p>
+        <LiveBadge member={member} />
         <a
           className={styles.cta}
           href={member.bilibili}

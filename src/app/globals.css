@@ -34,3 +34,11 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+/* 移动端逐屏吸附（< 48em，该断点不启用 lenis）：
+   proximity 仅在接近介绍区时吸附，保留触屏跟手性（AC-7） */
+@media (max-width: 47.99em) {
+  html {
+    scroll-snap-type: y proximity;
+  }
+}

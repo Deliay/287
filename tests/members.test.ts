@@ -17,6 +17,15 @@ describe("成员数据层 members", () => {
     ]);
   });
 
+  it("每位成员带需求 §7 的直播状态接口路径 liveStatusUrl（逐值断言，Sumire 无成员名后缀）", () => {
+    expect(members.map((m) => m.liveStatusUrl)).toEqual([
+      "/api/live/viridis/status",
+      "/api/live/komichi/status",
+      "/api/live/chu2u/status",
+      "/api/live/status",
+    ]);
+  });
+
   it("名称、罗马音、称号、简介均非空，立绘路径有效且文件存在于 public/", () => {
     for (const member of members) {
       expect(member.name.length).toBeGreaterThan(0);

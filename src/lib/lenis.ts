@@ -1,6 +1,6 @@
-/** 回顶所需的最小 lenis 能力（lenis 实例的 scrollTo 满足结构兼容） */
+/** 回顶/锚点跳转所需的最小 lenis 能力（lenis 实例的 scrollTo 同时支持数值与选择器目标） */
 export interface ScrollToTop {
-  scrollTo(target: number): void;
+  scrollTo(target: number | string): void;
 }
 
 let instance: ScrollToTop | null = null;

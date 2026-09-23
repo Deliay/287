@@ -1,0 +1,37 @@
+/* 直播状态徽章：固定高度三态（骨架 / 开播 / 未开播），沿用 Mantine 主题 token */
+.badge {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 1.5em;
+  padding: 0 var(--mantine-spacing-xs);
+  border-radius: var(--mantine-radius-sm);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* 加载中：占位骨架，高度与徽章一致避免布局跳动 */
+.skeleton {
+  width: 4em;
+  background-color: var(--mantine-color-night287-7);
+}
+
+/* 开播：红底白字，状态不依赖颜色单独传达（另有 aria-label 文本） */
+.living {
+  background-color: var(--mantine-color-red-6);
+  color: var(--mantine-color-white);
+}
+
+/* 未开播：低强调文本，非链接、不可点击 */
+.offline {
+  background-color: color-mix(in srgb, var(--mantine-color-night287-8) 70%, transparent);
+  color: var(--mantine-color-night287-3);
+}
+
+/* 直播标题过长时单行截断 */
+.ellipsis {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

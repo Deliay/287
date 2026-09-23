@@ -110,7 +110,7 @@
 
 - 文件：`src/components/smooth-scroll.tsx`、`src/app/globals.css`（或对应样式文件，移动端 scroll-snap）、`tests/smooth-scroll.test.tsx`（扩展）
 - 内容：
-  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；`resize` 时重算；卸载时清理。
+  - PC（lenis 初始化处）：mount 后由 `document.querySelectorAll("section[id^='member-']")` 计算各介绍区中心偏移量作为 snap 点（`lenis/snap`，`lockfile` 版本 1.3.26 已含）；选择器限定 `section` 元素，避免误命中介绍区标题 `id="member-{id}-heading"`（实现期细化，2026-09-23）；吸附类型取 `proximity`：仅在接近介绍区中心（默认阈值 50% 视口）时吸附，首屏小幅度滚动不会被强行拽走，同时满足 AC-6 越过半屏即落位；`resize` 时重算；卸载时清理。
   - 移动端（< 48em，不启用 lenis）：介绍区容器 CSS `scroll-snap-type: y proximity` + 各 section `scroll-snap-align: center`（proximity 保跟手性，对应 AC-7）。
   - 若开发时发现 lenis 1.3.26 snap API 与预期不符或联调抖动：回退为 PC 也用 CSS scroll-snap，lenis 仅保留阻尼（技术方案 §5-1 既定取舍），此变更需回本文件标记。
 - TDD：
@@ -163,12 +163,12 @@ T2 members 数据 ──► T3 live-status ──► T4 LiveBadge ──► T5 H
 
 | 任务 | 状态 | 备注 |
 |------|------|------|
-| T1 开发环境接口代理 | ☐ | |
-| T2 成员数据扩展 | ☐ | |
-| T3 直播状态拉取与缓存 | ☐ | |
-| T4 LiveBadge 组件 | ☐ | |
-| T5 HeroWall 锚点 + 徽章 | ☐ | |
-| T6 lenis 锚点平滑滚动 | ☐ | |
-| T7 MemberSection 锚点 + 徽章 | ☐ | |
-| T8 逐屏吸附滚动 | ☐ | |
-| T9 回归与整体验收 | ☐ | |
+| T1 开发环境接口代理 | ☑ | `next.config.ts` 增加按 `NODE_ENV` 判定的 rewrites；`next dev` 实测 `/api/live/viridis/status` 返回 200；构建期返回空数组，`next build` 仅打印 export 不支持 rewrites 的提示，产物不受影响 |
+| T2 成员数据扩展 | ☑ | 四成员逐值断言 `liveStatusUrl`；`liveUrl` 留待需求 T1 确认后再填 |
+| T3 直播状态拉取与缓存 | ☑ | 7 条用例全绿；实测响应 `{ok,status:{live,title}}` 与解析一致 |
+| T4 LiveBadge 组件 | ☑ | 三态渲染 + 标题截断阈值 16 字，5 条用例全绿 |
+| T5 HeroWall 锚点 + 徽章 | ☑ | 既有 B 站直链断言按风险 #6 预期改写（红→绿） |
+| T6 lenis 锚点平滑滚动 | ☑ | 拦截收敛在 SmoothScroll 的 document 点击监听；`event.defaultPrevented` 与「最近祖先链接非 #」两种情况均放行 |
+| T7 MemberSection 锚点 + 徽章 | ☑ | `id="member-{id}"` + 徽章位于 cta 上方 |
+| T8 逐屏吸附滚动 | ☑ | 选择器细化为 `section[id^='member-']`（见 T8 条目说明）；移动端 CSS proximity + section center 结构断言全绿 |
+| T9 回归与整体验收 | ☑ | `pnpm test`（54 用例）、`pnpm lint`、`pnpm build` 全绿；开发代理与 SSR 结构（锚点/section id/徽章骨架）已点验。**人工验收待人类执行**：真实接口开播态视觉、PC 吸附手感、移动端真机触屏手感 |

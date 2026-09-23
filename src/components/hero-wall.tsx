@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { Member } from "@/data/members";
+import { LiveBadge } from "@/components/live-badge";
 import styles from "./hero-wall.module.css";
 
 export interface HeroWallProps {
@@ -13,9 +14,7 @@ export function HeroWall({ members }: HeroWallProps) {
       {members.map((member) => (
         <a
           key={member.id}
-          href={member.bilibili}
-          target="_blank"
-          rel="noopener noreferrer"
+          href={`#member-${member.id}`}
           className={styles.panel}
           style={
             {
@@ -35,6 +34,7 @@ export function HeroWall({ members }: HeroWallProps) {
             className={styles.art}
           />
           <div className={styles.meta}>
+            <LiveBadge member={member} />
             <span className={styles.name}>
               {member.name}
               <span className={styles.roman}>{member.romanName}</span>
