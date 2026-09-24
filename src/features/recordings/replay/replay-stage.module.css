@@ -1,0 +1,397 @@
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+}
+
+.pageHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-sm);
+}
+
+/* R14-4：返回入口独占一行（标题行上方，PC 与移动端一致） */
+.backRow {
+  display: flex;
+}
+
+.back {
+  flex: 0 0 auto;
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-3);
+  padding: 6px 12px;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 999px;
+}
+
+.back:hover {
+  color: var(--mantine-color-night287-0);
+  border-color: var(--mantine-color-night287-4);
+}
+
+.headings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title {
+  font-size: clamp(20px, 3vw, 28px);
+  font-weight: 700;
+  color: var(--mantine-color-night287-0);
+}
+
+.meta {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-4);
+}
+
+/* PC：视频 4/5 + 事件列表 1/5；移动端上下布局（设计文档 §2.5） */
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+  min-height: 0;
+}
+
+@media (min-width: 48em) {
+  .layout {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .videoColumn {
+    flex: 4 1 0;
+    min-width: 0;
+  }
+
+  .timeline {
+    flex: 1 1 0;
+    min-width: 240px;
+  }
+}
+
+.videoColumn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+}
+
+.videoArea {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.overlayState,
+.overlayError {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mantine-spacing-xs);
+  background: rgb(0 0 0 / 55%);
+  color: var(--mantine-color-night287-0);
+  font-size: var(--mantine-font-size-sm);
+  text-align: center;
+  padding: var(--mantine-spacing-md);
+}
+
+.overlayError {
+  color: var(--mantine-color-komichi-6);
+}
+
+.overlayError button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 14px;
+  cursor: pointer;
+}
+
+.degrade {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 12px;
+  color: var(--mantine-color-night287-3);
+  font-size: var(--mantine-font-size-md);
+  text-align: center;
+  padding: var(--mantine-spacing-md);
+}
+
+/* 播放器资源加载失败（≠ MSE 降级）：显性提示 + 重试（审核 R9-a） */
+.loadError {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  border: 1px solid var(--mantine-color-komichi-6);
+  border-radius: 10px;
+  color: var(--mantine-color-komichi-6);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.loadError button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+.controls,
+.controlsHidden {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-7);
+  border-radius: 10px;
+}
+
+.controlsHidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.controls button,
+.controls select {
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.controls button:hover,
+.controls select:hover {
+  border-color: var(--mantine-color-night287-4);
+  color: var(--mantine-color-night287-0);
+}
+
+.progressWrap {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  min-width: 80px;
+}
+
+/* 进度条三段（设计文档 §2.5）：轨道 287-7 未加载 / buffered 287-5 已缓冲 / played 成员色已播放 */
+.progressTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 6px;
+  background: var(--mantine-color-night287-7);
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bufferedBar {
+  position: absolute;
+  inset: 0;
+}
+
+.buffered {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: var(--mantine-color-night287-5);
+}
+
+.played {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+}
+
+.progressWrap input[type="range"] {
+  position: relative;
+  width: 100%;
+  background: transparent;
+}
+
+.progressWrap input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.progressWrap input[type="range"]::-moz-range-track {
+  background: transparent;
+}
+
+.time {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-3);
+  white-space: nowrap;
+}
+
+.volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.volume input[type="range"] {
+  width: 72px;
+  accent-color: var(--mantine-color-night287-3);
+}
+
+/* 移动端仅静音切换（设计文档 §2.5，次要7）：滑杆仅 PC 显示，静音按钮仅移动端显示 */
+.muteButton {
+  display: none;
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+@media (min-width: 48em) {
+  .volume {
+    display: inline-flex;
+  }
+}
+
+@media (max-width: 47.99em) {
+  .volume {
+    display: none;
+  }
+
+  .muteButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* 事件列表 */
+.timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+  min-height: 240px;
+  max-height: 640px;
+}
+
+.list {
+  flex: 1 1 auto;
+  min-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--mantine-color-night287-7);
+  border-radius: 12px;
+  background: var(--mantine-color-night287-8);
+  padding: var(--mantine-spacing-xs);
+}
+
+.entry,
+.entryCurrent {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mantine-spacing-xs);
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--mantine-color-night287-7);
+  background: transparent;
+  color: var(--mantine-color-night287-2);
+  padding: 8px;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.entry:hover {
+  background: var(--mantine-color-night287-7);
+  color: var(--mantine-color-night287-0);
+}
+
+.entryCurrent {
+  background: color-mix(in srgb, var(--mantine-color-night287-6) 35%, transparent);
+  color: var(--mantine-color-night287-0);
+  box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
+}
+
+.entryTime {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-night287-4);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.entryText {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listState {
+  padding: var(--mantine-spacing-md);
+  color: var(--mantine-color-night287-4);
+  font-size: var(--mantine-font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+}
+
+.listState button {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
+.followButton {
+  align-self: flex-end;
+  border: 1px solid var(--mantine-color-night287-4);
+  background: var(--mantine-color-night287-8);
+  color: var(--mantine-color-night287-1);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: var(--mantine-font-size-xs);
+  cursor: pointer;
+}
+
+/* 页级错误/提示 */
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--mantine-spacing-sm);
+  padding: 64px 0;
+  color: var(--mantine-color-night287-3);
+}
+
+.message a {
+  color: var(--mantine-color-night287-2);
+  text-decoration: underline;
+}

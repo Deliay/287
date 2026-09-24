@@ -1,11 +1,31 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { members } from "@/data/members";
+import { members, type Member } from "@/data/members";
 
 describe("成员数据层 members", () => {
   it("共 4 位成员，顺序严格为绿黑白紫（viridis → komichi → chu2u → sumire）", () => {
     expect(members.map((m) => m.id)).toEqual(["viridis", "komichi", "chu2u", "sumire"]);
+  });
+
+  it("mid 为需求文档 §7 确认的 B 站 UID，可与 recording-status.items[].mid 关联", () => {
+    expect(members.map((m) => m.mid)).toEqual([
+      1891335475, 1512246445, 2138961136, 1150976664,
+    ]);
+    for (const member of members) expect(member.mid).toBeGreaterThan(0);
+  });
+
+  it("四位成员均可携带 roomId 兜底字段；填入时必须为正整数", () => {
+    const sample: Member[] = members.map((member, index) =>
+      index === 0 ? { ...member, roomId: 1727071052 } : member,
+    );
+    expect(sample[0]?.roomId).toBe(1727071052);
+    for (const member of members) {
+      if (member.roomId !== undefined) {
+        expect(Number.isInteger(member.roomId)).toBe(true);
+        expect(member.roomId).toBeGreaterThan(0);
+      }
+    }
   });
 
   it("每位成员的 B 站主页为需求文档 §7 确认的 UID 直链", () => {

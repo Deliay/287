@@ -1,0 +1,192 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+}
+
+.heading {
+  font-size: var(--mantine-font-size-xl);
+  font-weight: 600;
+  color: var(--mantine-color-night287-0);
+}
+
+.error {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-md);
+  border: 1px solid var(--mantine-color-komichi-6);
+  border-radius: 12px;
+  color: var(--mantine-color-komichi-6);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.retry {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+/* PC 2×2 网格 / 移动端纵向单列（设计文档 §2.3） */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+@media (min-width: 48em) {
+  .grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+  padding: var(--mantine-spacing-md);
+  padding-top: calc(var(--mantine-spacing-md) + 4px);
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-7);
+  border-radius: 12px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+@media (hover: hover) {
+  .card:hover {
+    background: var(--mantine-color-night287-7);
+  }
+}
+
+/* 成员色顶部指示条 4px（设计文档 §1） */
+.bar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+}
+
+.cardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-xs);
+}
+
+.name {
+  font-size: var(--mantine-font-size-md);
+  font-weight: 600;
+  color: var(--mantine-color-night287-1);
+}
+
+.badgeLive,
+.badgeIdle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--mantine-font-size-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--mantine-color-night287-6);
+  color: var(--mantine-color-night287-2);
+}
+
+.badgeLive {
+  color: var(--mantine-color-night287-0);
+  border-color: var(--mantine-color-night287-4);
+}
+
+/* 直播中圆点呼吸动效（1.5s） */
+.dotLive {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: breathe 1.5s ease-in-out infinite;
+}
+
+.dotIdle {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--mantine-color-night287-5);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.title {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-2);
+  min-height: 1.2em;
+}
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-xs);
+  margin-top: auto;
+}
+
+.updatedAt {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-4);
+}
+
+.listen,
+.stop,
+.listenError {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: var(--mantine-font-size-sm);
+  cursor: pointer;
+  border: 1px solid var(--mantine-color-night287-5);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+}
+
+.listen:hover:not(:disabled) {
+  border-color: var(--mantine-color-night287-3);
+  color: var(--mantine-color-night287-0);
+}
+
+.listen:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 收听中：成员色填充态 → 点击停止 */
+.stop {
+  background: var(--mantine-color-night287-6);
+  border-color: var(--mantine-color-night287-6);
+  color: var(--mantine-color-night287-0);
+}
+
+.listenError {
+  border-color: var(--mantine-color-komichi-6);
+  color: var(--mantine-color-komichi-6);
+}
+
+/* MSE 不可用降级文案（PRD §5 / 审核 R12-b） */
+.degrade {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-3);
+  text-align: right;
+  line-height: 1.4;
+}

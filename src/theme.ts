@@ -42,7 +42,7 @@ const komichi: MantineColorsTuple = [
   "#4d0a0f",
 ];
 
-/** 羽啾 Chu2u（设计文档 §1.4，明度高，深色背景文字用 0–2 浅阶） */
+/** 羽啾 Chu2u（设计文档 §1.4/§6-3 口径：深底**文字**取浅阶 0–2，**强调色块**取 index 6） */
 const chu2u: MantineColorsTuple = [
   "#fcfcf6",
   "#f6f8e5",
