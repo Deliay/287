@@ -22,7 +22,14 @@
 
 **新依赖必要性说明**：运行时仅新增 `mpegts.js` 一个依赖；弹幕浮层用 canvas 2D 自绘（逻辑与参考站一致，无成熟轻量库可替代且自绘可控），不引入弹幕库；事件列表用窗口化数据 + 普通列表渲染，暂不引入虚拟化库（见 §5-4）。
 
-**静态导出约束**：站点 `output: "export"` 部署到 Cloudflare Workers 静态资产（`next.config.ts`、`wrangler.toml`），**无服务端**。所有外部接口由浏览器直连：录播服务 `https://recordings.vtuber.fffdan.com`（CDN 已配置跨域，响应头含 `access-control-allow-methods`，参考站同为前端直连）、弹幕服务 `https://api.sumire.live`（参考站前端直连同款）。跨域风险见 §5-1。
+**静态导出约束**：站点 `output: "export"` 部署到 Cloudflare Workers 静态资产（`next.config.ts`、`wrangler.toml`），**无服务端**。**线上形态**：浏览器**直连**录播服务 `https://recordings.vtuber.fffdan.com` 与弹幕服务 `https://api.sumire.live`，不经过任何本站代理（R10-b）。
+
+> **跨域勘误（2026-09-24 实测 / 审核 R10-d）**：原表述「CDN 已配置跨域、响应头含 `access-control-allow-methods`、已实测带 CORS 头」**仅对参考站源成立**——两服务均为 **origin 白名单** CORS，当前仅放行 `https://sumire.live`。实测命令：
+> `curl -s -D- -o /dev/null -H "Origin: <源>" https://recordings.vtuber.fffdan.com/api/b/live/recording-status | grep -i access-control`（弹幕服务同理）：
+> - `Origin: https://sumire.live` → `access-control-allow-origin: https://sumire.live`（弹幕服务另带 `access-control-allow-credentials: true`）；
+> - `Origin: http://localhost:3000` → **无** `access-control-allow-origin`（仅有 `allow-methods`）；`OPTIONS` 预检 → `405`。
+>
+> 结论：**本地验收跨域必现** → 由本地反代通路解决（`pnpm dev` 自动拉起 `scripts/dev-with-proxy.mjs` + `scripts/lib/local-proxy.mjs`，透传 Range/流式，见计划 T15；前端仍为同一套 `NEXT_PUBLIC_*` 基址注入，线上形态代码不变）。**线上直连成立的前提**是两服务把本站生产域名加入白名单（上线前置条件，见 §5-1 风险 #1 与 R10-c）。静态导出不支持 Next `rewrites`/`proxy`（`node_modules/next/dist/docs/.../static-exports.md` Unsupported Features），故不得以 Next 层做代理。
 
 ## 3. 架构设计
 
@@ -179,7 +186,7 @@ useReplayEvents(
 
 | # | 风险 | 影响 | 缓解 / 取舍 |
 |---|------|------|-------------|
-| 1 | 静态站点无服务端，跨域完全依赖两个外部 API 的 CORS 配置 | 接口被浏览器拦截则模块不可用 | 录播服务已实测带 CORS 头且参考站前端直连同款；弹幕服务同源于参考站前端。开发首日用真实环境验证；若被拦，唯一退路是加一个 Cloudflare Worker 反代（另立方案，本期不预做） |
+| 1 | 静态站点无服务端，跨域完全依赖两个外部 API 的 CORS 配置（2026-09-24 实测：两服务均为 origin 白名单、仅放行 `https://sumire.live`；本站源与 `localhost` 均无 `allow-origin`，`OPTIONS` 预检 405） | **风险已发生**：本地验收跨域必现；生产域未加白名单时线上直连同样被浏览器拦截 | ① 本地验收：`pnpm dev` 自带本地反代（`scripts/dev-with-proxy.mjs` + `scripts/lib/local-proxy.mjs`，透传 Range/流式响应，见计划 T15），前端代码与线上同为「基址可注入的直连形态」；② **上线前置条件（人工协调）**：请服务侧将本站生产域名加入两服务 CORS 白名单，复验命令 `curl -s -D- -o /dev/null -H "Origin: <生产域>" https://recordings.vtuber.fffdan.com/api/b/live/recording-status \| grep -i access-control`（期望回显 `access-control-allow-origin: <生产域>`；弹幕服务对 `https://api.sumire.live/api/live-events/replay` 同法复验）；③ 若无法获得白名单：线上直连不成立，回到本表原退路（Cloudflare Worker 反代），与「线上直连」诉求冲突 → **提交人工决策，不得在代码里静默绕过或把线上改走代理** |
 | 2 | 未缓冲 seek 复杂（tag 边界、关键帧对齐、补丁维护） | seek 失败或卡死 | 完整移植参考站 `seek.ts` + mpegts 补丁的成熟实现，不自研；看门狗 15s 超时显性报错；已缓冲区间 seek 不受影响作为兜底体验 |
 | 3 | mpegts.js 补丁与版本升级耦合 | 升级依赖时补丁失效 | pnpm `patchedDependencies` 锁定精确版本；升级时人工核对补丁上下文 |
 | 4 | 事件列表在超长录播下条目多（实测 5 分钟 372 条，3 小时可达上万） | 列表渲染卡顿 | 仅渲染当前及相邻窗口（10 分钟粒度）的事件 + 简单窗口化；暂不上虚拟化库，实测卡顿再引入 `@tanstack/react-virtual` |

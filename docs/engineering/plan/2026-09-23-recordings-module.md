@@ -224,6 +224,9 @@
 
 - **第七轮返工修复（2026-09-24 · R9，行为修复仅 R9-a）**：(R9-a) `startReplay` 返回 false 的三种原因（mpegts 加载失败 / `isSupported()===false` / **被新 start·destroy 取代属静默语义**）已在 JSDoc 完整枚举；新增 `onLoadError` 回调区分加载失败，`isPlaybackSupported` 改为加载失败 reject（不再折算 false）；组件侧以 effect 内 `cancelled` 代次守卫丢弃过期结果（对齐 P3-b），仅 `isSupported()===false` 才渲染设计 §2.5 降级文案，加载失败渲染「播放器资源加载失败，请重试」+ 重试按钮（`startAttempt` 驱动重新探测与起播）。红测试：R9-a(1)「start 在途被取代 → 过期 false 不出降级 UI、健康实例不被销毁」、R9-a(2)「loader reject → 文案 ≠ MSE 降级文案且可重试」。(R9-b) 注释口径逐条修正 6 处：`seekResumeRef` 终结路径补失败两路、`convergeLanding` 调用方补 performSeek 成功分支、`StatusGrid` JSDoc 去重复改为描述自身、`formatOffset` 注释补 ≥1h 输出 `h:mm:ss`、P2 用例注释区分 buffered-bar/played-bar、分段边界用例注释更正为「非末段终点 = 本段 createdAt」。(R9-c) 提案 §3.3 分段推导句按实测数据勘误、§4.2 契约按实现刷新（提案头已记变更日期，实现不动）。(R9-d) 删除卸载用例中三重恒真的悬浮组件 DOM 断言（注册表两处真实断言保留）。门禁：`pnpm test` 20 文件/167 用例、`pnpm lint`、`tsc --noEmit`、`pnpm build` 全绿。
 
+- **第八轮返工留痕（2026-09-24 · R10）**：R10 不改动回放舞台代码（R1–R9 语义全部保持）；其影响集中在**本地验收通路**——回放页的未缓冲 seek（`seek.ts` Range 扫描 + 补丁 `seekToByteOffset`）与听直播 FLV 长连接在本地必须经 T15 反代透传 `Range`/流式响应才能验收，故 T13 的浏览器级验收步骤迁移至 **T15 人工验收清单**（回放含未缓冲 seek、弹幕事件、多路听直播）；T11/T12/T13 的单测覆盖不变。另注：直连与经代理的 Range 响应逐项一致（2026-09-24 实测），未缓冲 seek 行为在两种形态下等价。
+
+
 ### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。
@@ -233,6 +236,22 @@
   - **人工验收（待人类执行）**：真实流播放手感、四路混音、seek 实际命中率、弹幕视觉与移动端布局、iOS Safari 降级提示等依赖真实开播房间与多端环境的项，本节点无法自动完成，留待人工按下方清单逐项确认。
 - 对应验收：AC-9 及全部 AC 整体回归。
 - 预计：1.5h。
+
+### T15 本地验收反代通路（第八轮返工 · R10） ✅
+
+- **背景（R10，测试本地验收节点打回）**：两服务 API 为 origin 白名单 CORS（2026-09-24 实测仅放行 `https://sumire.live`），本地源直连必被拦；且静态导出不支持 Next `rewrites`/`proxy`，故必须走**独立本地进程**反代。
+- **交付物**：
+  - `scripts/lib/local-proxy.mjs`：可测单元（`resolveUpstream` 路径映射/防穿越、`forwardHeaders` Range 透传与 hop-by-hop 剔除、`corsHeaders` 预检与 expose、`parseProxyEnv`/`publicBases` 基址注入解析、`startProxy` 反代服务）；
+  - `scripts/dev-proxy.mjs`（`pnpm proxy`，独立启动，打印注入用基址）、`scripts/dev-with-proxy.mjs`（`pnpm dev` 启动器：起反代 + 注入 `NEXT_PUBLIC_RECORDINGS_BASE_URL=http://127.0.0.1:8788/recordings`、`NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8788/events`；`LOCAL_PROXY=0` 可关闭）；
+  - `package.json`：`dev` 改为经启动器，新增 `proxy`；**`build`/`preview`/`deploy` 未改**（生产直连形态，R10-b）。
+- **覆盖全部跨域流量（缺一不可）**：JSON 三接口 `/recordings/api/b/live/recording-status`、`/recordings/api/b/live/{roomId}/recordings`、`/events/api/live-events/replay`；FLV 媒体 `/recordings/api/b/live/{roomId}/recordings/{file}` 与 `/recordings/api/b/live/{roomId}/live-stream/audio`——媒体**透传 `Range` 且 `upstreamRes.pipe(res)` 流式转发、不整段缓冲**（未缓冲 seek 字节偏移续播与听直播长连接依赖）。
+- **测试（先红后绿）**：`tests/local-proxy.test.ts` 共 7 例——路径映射（含媒体两路径/防 `..` 穿越）、Range 透传与 hop-by-hop 剔除、CORS（allow-origin/allow-headers 含 Range/expose 含 Content-Range/预检回显）、基址注入解析、**本地端到端（mock 上游）：206 + content-range + Range 透传 + 分段写出体完整 + 预检 204 + 404/健康检查**、生产基址默认值断言、**构建产物断言**（`out/` HTML+JS 无 `127.0.0.1:8788`/代理前缀、且内联两个生产域名）。
+- **本地代理实测（2026-09-24，真实上游）**：`/__proxy/health` 200；`recording-status` 经代理 200 + `access-control-allow-origin: *`；`live-events/replay` 经代理 200；`OPTIONS` 预检 204 且 `allow-headers: range`；**FLV `Range: bytes=0-1023` → 206、`content-range: bytes 0-1023/481758038`、体 1024 字节、首三字节 `46 4c 56`（FLV）**；中段 Range 经代理与**直连上游逐项一致**（同 `content-range`/`content-length`，代理不改写不缓冲）。
+- **人工验收清单（浏览器内零跨域，`pnpm dev` 后逐项）**：① 四家直播状态卡片（recording-status）；② 历史录播列表（进视口取数）；③ 回放页播放 + **未缓冲 seek**（Range 扫描 + 字节续播）；④ 弹幕事件窗口加载与浮层；⑤ **听直播多路**（FLV 长连接音频 + 悬浮组件跨页）。探活：`curl -s http://127.0.0.1:8788/__proxy/health`。
+- **上线前置条件（R10-c，人工协调）**：两服务需将**本站生产域名**加入 CORS 白名单（当前仅 `https://sumire.live`）。复验命令：
+  `curl -s -D- -o /dev/null -H "Origin: <生产域>" https://recordings.vtuber.fffdan.com/api/b/live/recording-status | grep -i access-control`（期望回显 `access-control-allow-origin: <生产域>`；弹幕服务对 `https://api.sumire.live/api/live-events/replay` 同法复验）。若无法获得白名单 → 线上直连不成立，回到提案 §5-1 退路（Worker 反代，与「线上直连」冲突）并**提交人工决策**，不得静默绕过或把线上改走代理。
+- **生产形态自查（R10-e③）**：`pnpm build` 后 `grep -c "127.0.0.1:8788" out/*.html out/_next/static/chunks/*.js` 为 0，且 bundle 内含 `recordings.vtuber.fffdan.com` / `api.sumire.live`（由 `tests/local-proxy.test.ts` 断言 + 门禁复跑）。
+
 
 ## 2. 执行顺序与依赖
 

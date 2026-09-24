@@ -42,3 +42,33 @@ pnpm run deploy
 ```
 
 本地开发仍使用 `pnpm run dev`；静态导出不支持 `next start`，因此不提供 `start` 脚本。
+
+## 本地验收（录播模块跨域 / R10）
+
+两个服务 API 均为 **origin 白名单 CORS**（2026-09-24 实测仅放行 `https://sumire.live`），
+本地浏览器直连会被拦截，因此 `pnpm dev` 会**自动启动本地反代并注入基址**（前端代码与线上同为直连形态）：
+
+```bash
+pnpm dev        # next dev + 本地反代 http://127.0.0.1:8788（透传 Range / 流式响应）
+pnpm proxy      # 仅启动本地反代（调试用）
+LOCAL_PROXY=0 pnpm dev   # 关闭反代（前端直连生产源）
+
+# 探活
+curl -s http://127.0.0.1:8788/__proxy/health
+```
+
+路径映射：`/recordings/**` → `recordings.vtuber.fffdan.com`，`/events/**` → `api.sumire.live`。
+浏览器人工验收清单（四家状态 / 录播列表 / 回放含未缓冲 seek / 弹幕事件 / 听直播多路）见
+`docs/engineering/plan/2026-09-23-recordings-module.md` 的 **T15** 小节。
+
+`pnpm build` / `pnpm preview` / `pnpm deploy` **不经过**本地反代，产物保持线上直连形态。
+
+**上线前置条件（人工协调）**：需服务侧把本站生产域名加入两个服务的 CORS 白名单，复验：
+
+```bash
+curl -s -D- -o /dev/null -H "Origin: <生产域>" \
+  https://recordings.vtuber.fffdan.com/api/b/live/recording-status | grep -i access-control
+# 期望回显：access-control-allow-origin: <生产域>（弹幕服务同法复验）
+```
+
+若无法获得白名单，线上直连不成立，需回到技术方案 §5-1 的 Worker 反代退路并**提交人工决策**。
