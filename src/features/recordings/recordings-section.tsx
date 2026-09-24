@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { IconChevron } from "@/components/icons";
 import { members, type Member } from "@/data/members";
 import { fetchRoomRecordings, recordingReplayHref } from "./api";
+import { setLastTitle } from "./last-title";
 import type { RecordingFile, RecordingStatusItem } from "./types";
 import { formatDateTime, formatDuration, formatFileSize } from "./format";
 import { REVEAL_GROUP_EVENT, readRevealMemberId } from "./reveal-group";
@@ -49,9 +51,8 @@ interface MemberGroupProps {
   statusKind?: StatusKind;
 }
 
-/** 单成员录播分组：折叠态不请求；进入视口、首次展开或状态卡片定位时触发加载（AC-4）。 */
+/** 单成员录播分组：折叠态不请求；仅点击分组头或状态卡片定位时触发加载（AC-4 · R14-1 点击前零请求）。 */
 function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
-  const headerRef = useRef<HTMLButtonElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [state, setState] = useState<GroupState>({ kind: "idle" });
   const [page, setPage] = useState(1);
@@ -61,12 +62,12 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   const requestedRef = useRef(false);
   /** 是否已有数据/空态（有则不再取数，审核次要6） */
   const loadedRef = useRef(false);
-  /** 在途去重：observer 重建与补跑 effect 双触发只取一次（审核次要6） */
+  /** 在途去重：连点/定位与补跑 effect 双触发只取一次（审核次要6 · R14-1 后无视口触发面） */
   const inflightRef = useRef(false);
 
   const load = useCallback(async () => {
     requestedRef.current = true;
-    // 触发加载即视为展开：视口触发后 aria-expanded / 箭头与内容保持一致（审核次要9）
+    // 触发加载即视为展开：点击/定位触发后 aria-expanded / 箭头与内容保持一致（审核次要9 · R14-1）
     setExpanded(true);
     if (loadedRef.current) return;
     if (inflightRef.current) return;
@@ -90,15 +91,18 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
     setState({ kind: "loading" });
     try {
       const response = await fetchRoomRecordings(roomId);
+      const files = sortRecordings(response.files);
       loadedRef.current = true;
       setLoadedRoomId(roomId);
-      setState({ kind: "ok", files: sortRecordings(response.files) });
+      setState({ kind: "ok", files });
+      // 未开播标题降级链②（PRD FR-2 · R14-2）：最新一场非空 info.title 写入模块级缓存（不新增请求）
+      setLastTitle(member.id, files.find((file) => file.info?.title?.trim())?.info?.title);
     } catch {
       setState({ kind: "error" });
     } finally {
       inflightRef.current = false;
     }
-  }, [roomId, statusKind]);
+  }, [roomId, statusKind, member.id]);
 
   // recording-status 就绪后补跑挂起的加载（审核次要9 / 次要5 错误态恢复）
   useEffect(() => {
@@ -121,22 +125,6 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
     return () => window.removeEventListener(REVEAL_GROUP_EVENT, onReveal);
   }, [member.id, state.kind, load]);
 
-  // 进入视口（含 rootMargin 预取）即加载；断开观察避免重复触发
-  useEffect(() => {
-    const target = headerRef.current;
-    if (!target || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        observer.disconnect();
-        void load();
-      },
-      { rootMargin: "200px 0px" },
-    );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [load]);
-
   const toggle = () => {
     const next = !expanded;
     setExpanded(next);
@@ -152,7 +140,6 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   return (
     <div className={styles.group} id={`recordings-group-${member.id}`} data-testid={`recordings-group-${member.id}`}>
       <button
-        ref={headerRef}
         type="button"
         className={styles.groupHeader}
         aria-expanded={expanded}
@@ -169,7 +156,7 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
         <span className={styles.groupMeta}>
           {state.kind === "ok" && files.length > 0 ? `${files.length} 场` : ""}
           <span className={styles.chevron} aria-hidden="true">
-            {expanded ? "▾" : "▸"}
+            <IconChevron direction={expanded ? "up" : "down"} />
           </span>
         </span>
       </button>
@@ -279,8 +266,8 @@ interface RecordingsSectionProps {
 }
 
 /**
- * 历史录播列表（FR-4 / 设计文档 §2.4）：按成员分组、进入视口后加载、
- * `startedAt` 倒序、每页 20 条分页；条目跳转站内回放页。
+ * 历史录播列表（FR-4 / 设计文档 §2.4）：按成员分组、默认收起且仅显式展开时加载
+ * （R14-1 点击前零请求）、`startedAt` 倒序、每页 20 条分页；条目跳转站内回放页。
  */
 export function RecordingsSection({ items, statusKind = "ok" }: RecordingsSectionProps) {
   return (

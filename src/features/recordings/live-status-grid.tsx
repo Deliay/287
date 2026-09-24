@@ -9,8 +9,10 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
+import { IconPlay, IconSquare } from "@/components/icons";
 import { members, type Member } from "@/data/members";
 import { fetchRecordingStatus } from "./api";
+import { getLastTitle, subscribeLastTitle } from "./last-title";
 import type { RecordingStatusItem } from "./types";
 import { dispatchRevealGroup } from "./reveal-group";
 import {
@@ -131,7 +133,7 @@ function ListenButton({ member, item, lane }: MemberCardProps) {
         aria-label={`停止${member.name}`}
         onClick={() => audioRegistry.stop(lane.roomId)}
       >
-        ■ 停止收听
+        <IconSquare /> 停止收听
       </button>
     );
   }
@@ -146,13 +148,21 @@ function ListenButton({ member, item, lane }: MemberCardProps) {
         audioRegistry.play(roomId, { label: member.name, colorKey: member.colorKey });
       }}
     >
-      ▸ 听直播
+      <IconPlay /> 听直播
     </button>
   );
 }
 
 function MemberCard({ member, item, lane }: MemberCardProps) {
   const recording = item?.state === "recording";
+  /** 未开播标题降级链②（PRD FR-2 · R14-2）：读分组取数写入的模块级缓存；无缓存为 undefined（不新增请求） */
+  const lastTitle = useSyncExternalStore(
+    useCallback((listener: () => void) => subscribeLastTitle(listener), []),
+    useCallback(() => getLastTitle(member.id), [member.id]),
+    () => undefined,
+  );
+  /** 标题降级链（PRD FR-2）：① sessionTitle 非空（两态均展示）→ ② 已缓存最新一场 info.title → ③ 不展示 */
+  const displayTitle = item?.sessionTitle?.trim() ? item.sessionTitle : lastTitle;
 
   /** 定位并展开对应录播分组（按钮/链接点击除外）——鼠标与键盘共用（审核次要5/次要6） */
   const revealGroup = (target: EventTarget | null) => {
@@ -198,16 +208,18 @@ function MemberCard({ member, item, lane }: MemberCardProps) {
           {member.romanName}
         </h3>
         <span className={recording ? styles.badgeLive : styles.badgeIdle}>
+          {/* R14-3：直播中圆点取成员主题色 --mantine-color-{colorKey}-6（设计 §2.3 恢复口径，§6-1 勘误作废） */}
           <span
             className={recording ? styles.dotLive : styles.dotIdle}
+            style={
+              recording ? { backgroundColor: `var(--mantine-color-${member.colorKey}-6)` } : undefined
+            }
             aria-hidden="true"
           />
           {recording ? "直播中" : "未开播"}
         </span>
       </header>
-      {recording && item?.sessionTitle ? (
-        <p className={styles.title}>{item.sessionTitle}</p>
-      ) : null}
+      {displayTitle ? <p className={styles.title}>{displayTitle}</p> : null}
       <footer className={styles.cardFooter}>
         <time className={styles.updatedAt} dateTime={item?.updatedAt}>
           {item?.updatedAt ? `更新于 ${formatUpdatedAt(item.updatedAt)}` : "更新于 —"}

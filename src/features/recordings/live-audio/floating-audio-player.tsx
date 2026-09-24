@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
+import { IconCollapse, IconClose, IconExpand, IconNote } from "@/components/icons";
 import {
   MSE_DEGRADE_TEXT,
   audioRegistry,
@@ -81,14 +82,16 @@ export function FloatingAudioPlayer() {
         >
           {collapsed ? (
             <div className={styles.miniRow}>
-              <span className={styles.miniText}>♪ 在听 {lanes.length} 路</span>
+              <span className={styles.miniText}>
+                <IconNote /> 在听 {lanes.length} 路
+              </span>
               <button
                 type="button"
                 className={styles.iconButton}
                 aria-label="展开"
                 onClick={() => setCollapsed(false)}
               >
-                ▢
+                <IconExpand />
               </button>
             </div>
           ) : (
@@ -101,7 +104,7 @@ export function FloatingAudioPlayer() {
                   aria-label="收起"
                   onClick={() => setCollapsed(true)}
                 >
-                  ─
+                  <IconCollapse />
                 </button>
               </header>
               <ul className={styles.lanes}>
@@ -153,7 +156,7 @@ export function FloatingAudioPlayer() {
                       aria-label={`停止${laneLabel(lane)}`}
                       onClick={() => audioRegistry.stop(lane.roomId)}
                     >
-                      ✕
+                      <IconClose />
                     </button>
                   </li>
                 ))}

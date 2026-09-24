@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { act, fireEvent, screen } from "@testing-library/react";
+import { act, fireEvent, screen, within } from "@testing-library/react";
 import { FloatingAudioPlayer } from "@/features/recordings/live-audio/floating-audio-player";
 import {
   audioRegistry,
@@ -9,7 +9,7 @@ import {
   type LivePlayer,
   type LivePlayerFactory,
 } from "@/features/recordings/live-audio/audio-player-registry";
-import { renderWithTheme } from "./utils";
+import { GLYPH_RE, renderWithTheme } from "./utils";
 
 const meta = { label: "小松绿", colorKey: "viridis" };
 
@@ -165,5 +165,29 @@ describe("悬浮播放组件 FloatingAudioPlayer（T4 / AC-8）", () => {
     });
     rerender(<FloatingAudioPlayer />);
     expect(host.querySelectorAll("video")).toHaveLength(0);
+  });
+
+  it("R14-5 悬浮组件图标为内联 SVG 且无 emoji/Unicode 字形（迷你条与展开面板）", () => {
+    const { factory, ready } = fakeFactory();
+    restore = setLivePlayerFactory(factory);
+
+    renderWithTheme(<FloatingAudioPlayer />);
+    act(() => {
+      audioRegistry.play(101, meta);
+      ready[0]?.();
+    });
+
+    const panel = screen.getByTestId("floating-audio-player");
+    const collapse = within(panel).getByRole("button", { name: "收起" });
+    const stop = within(panel).getByRole("button", { name: /停止小松绿/ });
+    expect(collapse.querySelector("svg")).not.toBeNull();
+    expect(stop.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(panel.textContent ?? "")).toBe(false);
+
+    fireEvent.click(collapse);
+    const mini = screen.getByTestId("floating-audio-player");
+    const expand = within(mini).getByRole("button", { name: "展开" });
+    expect(expand.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(mini.textContent ?? "")).toBe(false);
   });
 });

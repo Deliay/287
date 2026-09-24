@@ -3,12 +3,13 @@ import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-li
 import { LiveStatusGrid, useRecordingStatus } from "@/features/recordings/live-status-grid";
 import { FloatingAudioPlayer } from "@/features/recordings/live-audio/floating-audio-player";
 import {
+  MSE_UNSUPPORTED_CODE,
   audioRegistry,
   setLivePlayerFactory,
   type LivePlayer,
   type LivePlayerFactory,
 } from "@/features/recordings/live-audio/audio-player-registry";
-import { renderWithTheme } from "./utils";
+import { GLYPH_RE, renderWithTheme } from "./utils";
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -226,7 +227,7 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
   it("R12-b/R13-b/R13-c 无 MSE 降级交互口径：卡片纯文案（按真实可访问名断言），悬浮保留逐路✕+全部停止、无音量滑杆、无重试", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
     restoreFactory = setLivePlayerFactory(() =>
-      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: "MSE_UNSUPPORTED" })),
+      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: MSE_UNSUPPORTED_CODE })),
     );
     renderWithTheme(
       <>
@@ -302,5 +303,52 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     });
     expect(screen.queryByText("旧标题")).not.toBeInTheDocument();
     expect(screen.getByText("新标题")).toBeInTheDocument();
+  });
+
+  it("R14-2① 未开播（not_live）且 sessionTitle 非空 → 展示上次直播标题（PRD FR-2 两态均展示）", async () => {
+    const items = {
+      ...statusSample,
+      items: statusSample.items.map((item) =>
+        item.roomId === 1002 ? { ...item, sessionTitle: "上次的直播" } : item,
+      ),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(items)));
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() => expect(screen.getByTestId("live-card-komichi")).toBeInTheDocument());
+    expect(screen.getByTestId("live-card-komichi").textContent).toContain("上次的直播");
+  });
+
+  it("R14-3 「直播中」圆点取成员主题色（--mantine-color-{colorKey}-6，设计 §2.3 恢复口径）", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() =>
+      expect(within(screen.getByTestId("live-card-viridis")).getByText("直播中")).toBeInTheDocument(),
+    );
+    const card = screen.getByTestId("live-card-viridis");
+    const dot = card.querySelector('span[class*="badge"]')?.querySelector('span[class*="dot"]');
+    expect(dot).not.toBeNull();
+    expect(dot).toHaveStyle({ backgroundColor: "var(--mantine-color-viridis-6)" });
+  });
+
+  it("R14-5 「听直播/停止收听」按钮为内联 SVG 且无 emoji/Unicode 字形", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    const { factory, ready } = fakePlayers();
+    restoreFactory = setLivePlayerFactory(factory);
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
+
+    const listen = screen.getByTestId("live-card-viridis").querySelector("button") as HTMLElement;
+    expect(listen.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(listen.textContent ?? "")).toBe(false);
+
+    fireEvent.click(listen);
+    act(() => {
+      ready[0]?.();
+    });
+    // 就绪 → playing → 卡片按钮转「停止收听」（与卡片标题回填后不冲突：按下述 testid 作用域取按钮）
+    const stop = screen.getByTestId("live-card-viridis").querySelector("button") as HTMLElement;
+    expect(stop.getAttribute("aria-label")).toContain("停止");
+    expect(stop.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(stop.textContent ?? "")).toBe(false);
   });
 });

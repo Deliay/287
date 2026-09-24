@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MSE_UNSUPPORTED_CODE,
   createAudioPlayerRegistry,
   MAX_AUDIO_LANES,
   type LivePlayer,
@@ -181,7 +182,7 @@ describe("多路音频注册表（T3 / AC-3）", () => {
 
   it("R12-b MSE 不可用 → 该路进入不可重试的降级态（unsupported）+ 降级文案由 UI 呈现", async () => {
     const factory: LivePlayerFactory = () =>
-      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: "MSE_UNSUPPORTED" }));
+      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: MSE_UNSUPPORTED_CODE }));
     const registry = createAudioPlayerRegistry(factory);
 
     expect(registry.play(7)).toBe(true);

@@ -11,6 +11,14 @@ import {
 } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import {
+  IconArrowLeft,
+  IconFullscreen,
+  IconPause,
+  IconPlay,
+  IconVolume,
+  IconVolumeMute,
+} from "@/components/icons";
 import { members } from "@/data/members";
 import { fetchRoomRecordings, recordingFileUrl } from "../api";
 import type { RecordingFile } from "../types";
@@ -613,9 +621,11 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   return (
     <div className={styles.stage} data-testid="replay-stage">
       <header className={styles.pageHeader}>
-        <Link href="/recordings" className={styles.back}>
-          ← 返回录播列表
-        </Link>
+        <div className={styles.backRow}>
+          <Link href="/recordings" className={styles.back}>
+            <IconArrowLeft /> 返回录播列表
+          </Link>
+        </div>
         <div className={styles.headings}>
           <h1 className={styles.title}>{title}</h1>
           <p className={styles.meta}>
@@ -704,7 +714,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               aria-label="播放控件"
             >
               <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlay}>
-                {playing ? "⏸" : "▶"}
+                {playing ? <IconPause /> : <IconPlay />}
               </button>
 
               <div className={styles.progressWrap}>
@@ -785,7 +795,9 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               </span>
 
               <label className={styles.volume}>
-                <span aria-hidden="true">🔊</span>
+                <span aria-hidden="true">
+                  <IconVolume />
+                </span>
                 <input
                   type="range"
                   aria-label="音量"
@@ -820,7 +832,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                   }
                 }}
               >
-                {muted ? "🔇" : "🔊"}
+                {muted ? <IconVolumeMute /> : <IconVolume />}
               </button>
 
               <select aria-label="倍速" value={rate} onChange={handleRateChange}>
@@ -832,7 +844,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               </select>
 
               <button type="button" aria-label="全屏" onClick={handleFullscreen}>
-                ⛶
+                <IconFullscreen />
               </button>
 
               <button

@@ -6,8 +6,13 @@
 
 .pageHeader {
   display: flex;
-  align-items: flex-start;
-  gap: var(--mantine-spacing-md);
+  flex-direction: column;
+  gap: var(--mantine-spacing-sm);
+}
+
+/* R14-4：返回入口独占一行（标题行上方，PC 与移动端一致） */
+.backRow {
+  display: flex;
 }
 
 .back {

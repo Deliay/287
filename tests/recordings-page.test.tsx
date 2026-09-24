@@ -45,7 +45,7 @@ describe("录播页组装（T8 / AC-2、AC-4）", () => {
     expect(screen.getByRole("heading", { name: "历史录播" })).toBeInTheDocument();
     expect(screen.getAllByTestId(/^live-card-/)).toHaveLength(4);
 
-    // 首屏只拉录制状态；录播列表进入视口才拉（AC-4）
+    // 首屏只拉录制状态；点击分组前零请求（AC-4 / R14-1）
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/recording-status");
   });

@@ -17,7 +17,7 @@ import {
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
-import { renderWithTheme } from "./utils";
+import { GLYPH_RE, renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
 vi.mock("next/navigation", () => ({
@@ -172,6 +172,37 @@ describe("回放舞台 ReplayStage（T13 / AC-5、AC-6、AC-7）", () => {
     // 进度条含缓冲显示：buffered-bar 为「已缓冲」多段容器，played-bar 才是「已播放」（审核 R9-b）
     expect(screen.getByTestId("buffered-bar")).toBeInTheDocument();
     expect(screen.getByTestId("played-bar")).toBeInTheDocument();
+  });
+
+  it("R14-4 返回入口独占一行（标题行上方，PC/移动端一致）；返回箭头 SVG 化（R14-5 同批）", () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    const back = screen.getByRole("link", { name: /返回录播列表/ });
+    const title = screen.getByRole("heading", { level: 1 });
+    const backRow = back.parentElement;
+    expect(backRow).not.toBeNull();
+    // 返回行容器只含返回入口、不包含标题（红：当前 back 与 headings 同处 pageHeader）
+    expect(backRow).not.toContainElement(title);
+    expect(backRow?.querySelectorAll("a, h1, p")).toHaveLength(1);
+    // 标题行是返回行的兄弟容器（同页头内，且位于其下方）
+    expect(backRow?.parentElement).toContainElement(title.parentElement as HTMLElement);
+    expect(back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // R14-5：返回箭头为内联 SVG，文本无 ← 字形
+    expect(back.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(back.textContent ?? "")).toBe(false);
+  });
+
+  it("R14-5 播放控件按钮为内联 SVG 且无 emoji/Unicode 字形（播放/暂停、静音、全屏必测，控件栏整体无字形）", async () => {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument());
+    const group = screen.getByRole("group", { name: "播放控件" });
+    for (const name of ["播放", "静音", "全屏"]) {
+      const button = within(group).getByRole("button", { name });
+      expect(button.querySelector("svg")).not.toBeNull();
+      expect(GLYPH_RE.test(button.textContent ?? "")).toBe(false);
+    }
+    // 同批收敛：音量前缀字形（🔊）等也不复存在 → 控件栏整体无字形
+    expect(GLYPH_RE.test(group.textContent ?? "")).toBe(false);
   });
 
   it("事件列表随播放 offset 高亮当前条目，点击条目按锚点换算 seek", async () => {

@@ -5,7 +5,7 @@ import { RecordingsSection, sortRecordings } from "@/features/recordings/recordi
 import { LiveStatusGrid } from "@/features/recordings/live-status-grid";
 import type { RecordingStatusItem } from "@/features/recordings/types";
 import { theme } from "@/theme";
-import { renderWithTheme } from "./utils";
+import { GLYPH_RE, renderWithTheme } from "./utils";
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -83,30 +83,25 @@ function makeFile(name: string, startedAt: string, options: Partial<{ endedAt: s
 }
 
 describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
-  it("初始渲染不发出任何 recordings 请求（后加载）", () => {
+  it("初始渲染不发出任何 recordings 请求（后加载，R14-1 点击前零请求）", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(MockIntersectionObserver.instances).toHaveLength(4);
     expect(screen.getByTestId("recordings-group-viridis")).toBeInTheDocument();
   });
 
-  it("分组进入视口才请求对应房间；失败仅影响该分组并可重试", async () => {
+  it("点击分组头才请求对应房间；失败仅影响该分组并可重试（R14-1：进入视口不触发）", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("boom", { status: 500 }))
       .mockResolvedValue(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
 
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
     expect(await screen.findByRole("button", { name: "重试" })).toBeInTheDocument();
@@ -134,12 +129,9 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("较新的直播")).toBeInTheDocument());
 
     const titles = within(screen.getByTestId("recordings-viridis-list"))
@@ -160,12 +152,9 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     );
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ files }));
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("第 1 场")).toBeInTheDocument());
 
     const list = screen.getByTestId("recordings-viridis-list");
@@ -187,12 +176,9 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       jsonResponse({ files: [makeFile(fileName, "2026-09-20T20:00:00Z", { title: "带空格" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("带空格")).toBeInTheDocument());
 
     const link = within(screen.getByTestId("recordings-viridis-list")).getByRole("link");
@@ -201,12 +187,11 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     );
   });
 
-  it("次要9 视口触发加载成功后分组转为展开态（aria-expanded / 箭头一致）", async () => {
+  it("次要9 点击展开加载成功后分组转为展开态（aria-expanded / 箭头一致）", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
     expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
@@ -214,9 +199,7 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       "false",
     );
 
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
     expect(screen.getByTestId("recordings-group-viridis").querySelector("button")).toHaveAttribute(
       "aria-expanded",
@@ -229,7 +212,6 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     // 用与 renderWithTheme 相同的包裹层渲染，保证 rerender 不会卸载重建分组（保留已请求状态）
     const renderTree = (items: RecordingStatusItem[], statusKind: "loading" | "ok") => (
@@ -238,9 +220,7 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       </MantineProvider>
     );
     const { rerender } = rtlRender(renderTree([], "loading"));
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await flushMicrotasks();
     expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
     expect(screen.getByText(/等待直播状态/)).toBeInTheDocument();
@@ -259,12 +239,9 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={statusItems} />);
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
     const header = screen.getByTestId("recordings-group-viridis").querySelector("button");
     expect(header).toHaveAttribute("aria-expanded", "true");
@@ -286,12 +263,9 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
   it("次要5 statusKind=error 时分组给出错误态，而非永远「等待直播状态」", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(<RecordingsSection items={[]} statusKind="error" />);
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await flushMicrotasks();
 
     expect(screen.getByText(/直播状态获取失败/)).toBeInTheDocument();
@@ -310,7 +284,6 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(
       <>
@@ -331,12 +304,11 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     );
   });
 
-  it("次要6 状态就绪后 observer 回调与补跑 effect 双触发只取一次数", async () => {
+  it("次要6 点击展开与补跑 effect 双触发只取一次数（R14-1 后无视口触发面）", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     const tree = (items: RecordingStatusItem[], statusKind: "loading" | "ok") => (
       <MantineProvider theme={theme}>
@@ -344,22 +316,20 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       </MantineProvider>
     );
     const { rerender } = rtlRender(tree([], "loading"));
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    }); // 视口触发 → 等待状态，未取数
-    await flushMicrotasks();
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
+    await flushMicrotasks(); // 点击展开 → 等待状态，未取数
     expect(fetchMock).not.toHaveBeenCalled();
 
     rerender(tree(statusItems, "ok")); // 状态就绪 → 补跑（取数1 次）
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    // 真实 IntersectionObserver 在（重建后）observe 时即回调一次 → 再次 intersect 不得重复取数
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    // R14-1 后唯一触发面为点击：加载完成后再收起/展开（两次点击）不得重复取数
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    const header = screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement;
+    fireEvent.click(header);
+    fireEvent.click(header);
     await flushMicrotasks();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
   });
 
   it("次要6 分组加载失败后，状态卡片再次定位会重试该分组", async () => {
@@ -379,7 +349,6 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(
       <>
@@ -388,15 +357,16 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       </>,
     );
     await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() =>
       expect(screen.getByTestId("recordings-group-viridis").textContent).toContain("加载失败"),
     );
 
     fireEvent.click(screen.getByTestId("live-card-viridis"));
-    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    // 断言收窄到分组列表（R14-2 后卡片标题可能回填同一文本，getByText 会命中多处）
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-viridis-list").textContent).toContain("游玩饥荒"),
+    );
     const recordingsCalls = fetchMock.mock.calls.filter((call) =>
       String(call[0]).includes("/api/b/live/1001/recordings"),
     );
@@ -408,7 +378,6 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
     );
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     const tree = (items: RecordingStatusItem[]) => (
       <MantineProvider theme={theme}>
@@ -416,9 +385,7 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       </MantineProvider>
     );
     const { rerender } = rtlRender(tree(statusItems));
-    await act(async () => {
-      MockIntersectionObserver.instances[0]?.trigger();
-    });
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
     expect(
       within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
@@ -472,7 +439,6 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 
     renderWithTheme(
       <>
@@ -491,7 +457,97 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(String(fetchMock.mock.calls[1][0])).toContain("/api/b/live/1001/recordings");
-    expect(screen.getByText("游玩饥荒")).toBeInTheDocument();
+    // 断言收窄到分组列表（R14-2 后卡片标题回填「游玩饥荒」，getByText 会命中多处）
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-viridis-list").textContent).toContain("游玩饥荒"),
+    );
+  });
+
+  it("R14-1 点击前零请求：挂载与进入视口均不发 recordings 请求，点击分组头才发对应房间请求", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    // 模拟「进入视口」：旧实现在此即触发取数；R14-1 后实现不再创建观察器
+    await act(async () => {
+      for (const instance of [...MockIntersectionObserver.instances]) instance.trigger();
+    });
+    await flushMicrotasks();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
+  });
+
+  it("R14-5 分组头展开箭头为内联 SVG，不使用 Unicode 几何字形", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    const header = screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement;
+    expect(header.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(header.textContent ?? "")).toBe(false);
+  });
+
+  it("R14-2② 未开播+sessionTitle 为 null+分组已点开缓存 → 卡片以缓存的最新一场 info.title 回填（零新增请求）", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("recording-status")) return Promise.resolve(jsonResponse({ items: statusItems }));
+      return Promise.resolve(
+        jsonResponse({ files: [makeFile("a.flv", "2026-09-20T20:00:00Z", { title: "四时小路的昨夜场" })] }),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <RecordingsSection items={statusItems} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByTestId("live-card-komichi")).toBeInTheDocument());
+    // 降级链③：缓存未建立时不展示标题行，且仅 1 次 status 请求
+    expect(screen.getByTestId("live-card-komichi").querySelector("p")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 点开 komichi 分组 → 取数成功将最新一场 info.title 写入模块级缓存
+    fireEvent.click(screen.getByTestId("recordings-group-komichi").querySelector("button") as HTMLElement);
+    await waitFor(() => expect(screen.getByTestId("recordings-komichi-list")).toBeInTheDocument());
+
+    // 降级链②：卡片回填缓存标题；标题来自缓存，不新增任何请求
+    await waitFor(() =>
+      expect(screen.getByTestId("live-card-komichi").textContent).toContain("四时小路的昨夜场"),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("R14-2③ 未开播+null+无缓存 → 不展示标题行且零新增请求（降级链终点）", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        items: [
+          {
+            mid: 1150976664,
+            roomId: 1004,
+            state: "not_live",
+            sessionTitle: null,
+            files: [],
+            updatedAt: "2026-09-23T14:57:41.605Z",
+            streamer: { name: "枝堇Sumire" },
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<LiveStatusGrid />);
+    await waitFor(() => expect(screen.getByTestId("live-card-sumire")).toBeInTheDocument());
+    await flushMicrotasks();
+    // 降级链③：无 sessionTitle 也无缓存（sumire 分组从未取数）→ 不渲染标题行
+    expect(screen.getByTestId("live-card-sumire").querySelector("p")).toBeNull();
+    // 不为标题新增任何请求（R14-1 前提）
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
