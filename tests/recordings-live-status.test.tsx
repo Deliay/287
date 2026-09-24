@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { LiveStatusGrid, useRecordingStatus } from "@/features/recordings/live-status-grid";
 import { FloatingAudioPlayer } from "@/features/recordings/live-audio/floating-audio-player";
 import {
@@ -223,7 +223,7 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     expect(screen.getByTestId("live-card-sumire").querySelector("button")).toHaveTextContent("听直播");
   });
 
-  it("R12-b 无 MSE 环境点「听直播」→ 卡片与悬浮组件呈现降级文案，且不提供重试/停止按钮", async () => {
+  it("R12-b/R13-b/R13-c 无 MSE 降级交互口径：卡片纯文案（按真实可访问名断言），悬浮保留逐路✕+全部停止、无音量滑杆、无重试", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
     restoreFactory = setLivePlayerFactory(() =>
       Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: "MSE_UNSUPPORTED" })),
@@ -237,15 +237,28 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
 
     fireEvent.click(screen.getByTestId("live-card-viridis").querySelector("button") as HTMLElement);
-    // 红：当前落入 error + 「重试」循环，且无降级文案
     await waitFor(() =>
       expect(screen.getAllByText(/当前浏览器无法播放/).length).toBeGreaterThan(0),
     );
-    // 状态卡片与悬浮组件**各自**同步呈现（PRD §5 兼容性，审核 R12-b）
-    expect(screen.getByTestId("live-card-viridis").textContent).toContain("当前浏览器无法播放");
-    expect(screen.getByTestId("floating-audio-player").textContent).toContain("当前浏览器无法播放");
-    expect(screen.queryByRole("button", { name: /重试/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /停止收听/ })).not.toBeInTheDocument();
+
+    const card = screen.getByTestId("live-card-viridis");
+    const floating = screen.getByTestId("floating-audio-player");
+    // 状态卡片与悬浮组件**各自**同步呈现降级文案（PRD §5 兼容性，审核 R12-b）
+    expect(card.textContent).toContain("当前浏览器无法播放");
+    expect(floating.textContent).toContain("当前浏览器无法播放");
+
+    // 卡片作用域：纯文案 span，无听/停/重试入口——按**真实可访问名**断言
+    // （旧断言 /停止收听/ 匹配不到 aria-label「停止小松绿」，恒真，审核 R13-b）
+    expect(within(card).queryByRole("button", { name: /^听/ })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^停止/ })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /重试/ })).not.toBeInTheDocument();
+
+    // 悬浮作用域唯一口径（审核 R13-c）：保留逐路 ✕ 停止（该路唯一移除入口）与「全部停止」
+    expect(within(floating).queryByRole("button", { name: /^停止/ })).toBeInTheDocument();
+    expect(within(floating).getByRole("button", { name: "全部停止" })).toBeInTheDocument();
+    // unsupported 路无 player → 移除无意义的音量滑杆（红：当前仍渲染 range）
+    expect(within(floating).queryByRole("slider")).not.toBeInTheDocument();
+    expect(within(floating).queryByRole("button", { name: /重试/ })).not.toBeInTheDocument();
   });
 
   it("次要5 并发竞态：旧响应不得覆盖新数据（轮询/重试/visibility 叠加）", async () => {

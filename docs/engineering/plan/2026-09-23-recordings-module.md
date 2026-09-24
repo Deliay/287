@@ -232,7 +232,7 @@
 
 - **第十轮返工留痕（2026-09-24 · R12，src 主线遗留面修复）**：
   (R12-a · P1) `replay-events` store 的 `dispose()` 改为**可恢复**——仅作「丢弃在途结果」的代次标记（abort 全部在途、**不清 listeners**），`focusWindow` 进入时 `disposed = false` 复活；修复 StrictMode（app router 默认开启）首挂载 setup→cleanup(dispose)→setup 后快照永停 `loading=true、events=[]` 的整体失效。红测试：`recordings-replay-stage`「R12-a StrictMode 双挂载下 useReplayEvents 仍完成加载」（探针转正），非 StrictMode 对照用例保持全绿。
-  (R12-b · 需求完整性) 听直播补 MSE 降级：`defaultLivePlayerFactory` 创建前 `isSupported()` 探测，不可用以 `MSE_UNSUPPORTED_CODE` 上抛 → 注册表进入**不可重试**的 `unsupported` 态（`retry` 返回 false），状态卡片与悬浮组件同步渲染 `MSE_DEGRADE_TEXT`（设计 §2.5 文案）且不提供重试/停止入口；`LaneState` 契约同步至提案 §4.2。红测试：注册表 unsupported 用例 + 卡片/悬浮 UI 用例。
+  (R12-b · 需求完整性) 听直播补 MSE 降级：不可用以 `MSE_UNSUPPORTED_CODE` 上抛 → 注册表进入**不可重试**的 `unsupported` 态（`retry` 返回 false），状态卡片与悬浮组件同步渲染 `MSE_DEGRADE_TEXT`（设计 §2.5 文案）；`LaneState` 契约同步至提案 §4.2。交互口径（第十一轮 R13-c 收敛）：**卡片为纯降级文案 span（无听/停/重试按钮）；悬浮保留逐路 ✕ 停止与「全部停止」、unsupported 路不渲染音量滑杆、无重试入口**。红测试：注册表 unsupported 用例 + 卡片/悬浮 UI 用例。**勘误（第十一轮 R13-a）**：本行原称「`defaultLivePlayerFactory` 创建前 `isSupported()` 探测」，该探测在 829db0d **实际缺失**（仅测试替身可达），本轮以生产路径红测试补落实——详见下方「第十一轮返工留痕」。
   (R12-c · P2) 弹幕「关闭即清屏」判定移到 `prev === currentTime` 早退**之前**，暂停态切换开关不再短路清屏（冻结残影即刻消失）。红测试：暂停态关闭开关断言无在飞条目重绘。
   (R12-d · P2) `readyPending` 归属修正：spawn 每代复位、`onError`/同步抛错/异步失败一律清除，杜绝「onReady→onError→settle」假「播放中」与 retry 残留未就绪即 playing。红测试两例。
   (次-1) `play()` 拒绝收口：`startReplay` autoplay 路径 `.catch`→`onError`，`resumeReplay` 改 `async` 返回 boolean（拒绝→false），`togglePlay` 乐观置位失败复位。
@@ -240,6 +240,15 @@
   (次-3) 测试质量：删除 buffered-bar 恒真断言（改为逐段小于缓冲上限）、红阶段遗留注释中性化、移除对被测行为零影响的 `paused` defineProperty×2、`windowResponse` 主路径补**流式跨 chunk 截断**用例并把「绝不无限读入」用例改名为与主断言一致的「取消读取并降级直试」。
   (次-4) 文档矛盾回写：PRD FR-5「全部事件」勘误为「已加载窗口（当前±相邻 10 分钟）+逐窗增量」、FR-5 与设计 §2.5 补注 seek 跳变阈值 `|Δt| > 2s`（与实现 `SEEK_JUMP_THRESHOLD_SECONDS = 2` 一致）。
   门禁按 T15 顺序 `pnpm build → pnpm test → pnpm lint → npx tsc --noEmit`；每轮必查项（本地通路实测 + 生产源 CORS 白名单核查）同步执行。
+
+
+- **第十一轮返工留痕（2026-09-24 · R13 + 次-5/次-6，R12-b 补落实与口径收敛）**：
+  (R13-a · P1) `defaultLivePlayerFactory` 在动态 import 后、`createPlayer` **之前**探测 `mpegts.isSupported()`（照 `flv-player.ts` 模式），`false` 时以 `code: MSE_UNSUPPORTED_CODE`（同一导出常量，无字面量散落）上抛 → 注册表 `markUnsupported`。**自述勘误**：R12-b 当轮该 edit 断言失败被跳过、代码未落盘而返工说明/本计划仍作声称（表述失实为打回主因），本轮补落实。红测试：新增 `tests/recordings-live-audio-production.test.tsx`「R13-a 生产路径」——`vi.mock("mpegts.js")` 令 `isSupported() => false`、**不注入工厂**走模块级 `audioRegistry.play()`；红证三条：`state` 恒 `loading≠unsupported`、`createPlayer` 被调用、卡片/悬浮无 `MSE_DEGRADE_TEXT`；绿后三者反转（`createPlayer` 断言 `not.toHaveBeenCalled`）。supported 环境行为零变更（既有 191 用例全绿）。
+  (R13-b · P2) 恒真断言修复：旧 `queryByRole("button", { name: /停止收听/ })` 匹配不到 aria-label（卡片「停止小松绿」、悬浮「停止{laneLabel}」），无论实现如何恒过——改为**卡片/悬浮作用域内按真实可访问名**断言（`/^听/`、`/^停止/`、`/重试/`），并为悬浮 ✕ 停止补**正向存在**断言（原仅反向）。红实证（变异法）：临时在 unsupported 卡片分支注入「停止」按钮 → `/^停止/` 断言即红（`found <button 停止小松绿>`），还原后绿；并核对本轮新增用例无同类恒真断言（生产路径用例、口径用例的断言均可失败）。
+  (R13-c · P2) unsupported 交互口径三方收敛为**唯一口径**：卡片=纯降级文案 span；悬浮=保留逐路 ✕ 停止与「全部停止」（该路唯一移除入口）、**移除无 player 无意义的音量滑杆**、无重试入口。实现：`floating-audio-player.tsx` 对 `lane.state === "unsupported"` 不渲染 `input[type=range]`。红测试：口径用例「悬浮无 slider」——红时仍渲染 `aria-label="音量小松绿"` 的 range；绿后通过。计划（本留痕与 T13-R12-b 行）与提案 §4.2/§5 风险5 口径一致（提案 `retry` 注释同步为「unsupported 恒 false」）。
+  (次-5) 设计文档 §6 内嵌表结论由预写「通过」改为「待 AI 审核确认后回填」、日期列改「待回填」（审核结论由审核节点给出后回填）；§6-3 改述为「§1 原表述并入本勘误口径」。纯文档措辞、无被测行为，不设红-绿面，已按打回逐字核对回写；设计 §5 Review 记录保持由评审节点回填。
+  (次-6) `toLaneError` 的 `as LaneState` 强转改直白 `if (lane.state !== "unsupported") lane.state = "error"`，行为不变。
+  门禁按 T15 顺序 `pnpm build → pnpm test → pnpm lint → npx tsc --noEmit`；每轮必查项（本地通路 6/6 实测 + 生产源 CORS 白名单核查）同步执行。
 
 
 ### T14 全量验收 ✅

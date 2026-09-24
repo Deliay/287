@@ -134,16 +134,19 @@ export function FloatingAudioPlayer() {
                         </button>
                       )}
                     </span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.1}
-                      value={lane.volume}
-                      aria-label={`音量${laneLabel(lane)}`}
-                      className={styles.volume}
-                      onChange={(event) => audioRegistry.setVolume(lane.roomId, Number(event.target.value))}
-                    />
+                    {/* unsupported 路无 player，音量无效 → 移除滑杆；逐路 ✕ 停止保留（该路唯一移除入口）（审核 R13-c） */}
+                    {lane.state !== "unsupported" && (
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.1}
+                        value={lane.volume}
+                        aria-label={`音量${laneLabel(lane)}`}
+                        className={styles.volume}
+                        onChange={(event) => audioRegistry.setVolume(lane.roomId, Number(event.target.value))}
+                      />
+                    )}
                     <button
                       type="button"
                       className={styles.stopButton}

@@ -187,7 +187,8 @@ export class AudioPlayerRegistry {
     lane.readyPending = false;
     const toLaneError = () => {
       lane.readyPending = false; // 失败必须同时作废就绪挂起（审核 R12-d(1)）
-      lane.state = (lane.state === "unsupported" ? lane.state : "error") as LaneState;
+      // 已是 unsupported（环境性降级）时不再降为 error（审核 次-6：直白分支，不用 as 掩盖收窄）
+      if (lane.state !== "unsupported") lane.state = "error";
     };
     const markUnsupported = () => {
       lane.readyPending = false;
@@ -272,6 +273,13 @@ export class AudioPlayerRegistry {
  */
 const defaultLivePlayerFactory: LivePlayerFactory = async ({ url, media, volume, onReady, onError }) => {
   const mpegts = (await import("mpegts.js")).default;
+  // MSE 探测（照 flv-player.ts 模式）：不可用时以 MSE_UNSUPPORTED_CODE 上抛，
+  // 由注册表转为不可重试的 unsupported 降级态——生产路径唯一抛出点（PRD §5 / 提案 §5 风险5，审核 R13-a）
+  if (!mpegts.isSupported()) {
+    const error: Error & { code?: string } = new Error(MSE_DEGRADE_TEXT);
+    error.code = MSE_UNSUPPORTED_CODE;
+    throw error;
+  }
   media.volume = volume;
   const player = mpegts.createPlayer({ type: "flv", isLive: true, url });
   const handleReady = () => onReady();

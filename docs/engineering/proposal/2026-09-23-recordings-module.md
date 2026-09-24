@@ -155,7 +155,7 @@ play(roomId: number, meta?: { label: string; colorKey: string }): boolean; // �
 stop(roomId: number): void;
 stopAll(): void;
 setVolume(roomId: number, volume: number): void;
-retry(roomId: number): boolean;        // 失败重试：返回是否命中已有 lane
+retry(roomId: number): boolean;        // 失败重试：返回是否命中**可重试** lane（unsupported 恒 false，2026-09-24 R13-c）
 subscribeLanes(cb): () => void;        // useSyncExternalStore 用
 getLanesSnapshot(): readonly AudioLane[];
 
