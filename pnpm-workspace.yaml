@@ -3,3 +3,7 @@ allowBuilds:
   sharp: false
   unrs-resolver: false
   workerd: true
+
+# mpegts.js 补丁：暴露 seekToByteOffset / setBufferLimits（技术方案 §3.3，移植自 Deliay/sumire）
+patchedDependencies:
+  mpegts.js@1.8.2: patches/mpegts.js@1.8.2.patch

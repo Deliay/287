@@ -1,0 +1,190 @@
+/* 媒体元素宿主：保持在文档内但不可见（muted=false 的媒体元素继续播放音频） */
+.host {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* 展开态：PC 右下角悬浮，移动端底部全宽贴边（设计文档 §2.6） */
+.panel {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+  width: 320px;
+  padding: var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+/* 收起态（迷你条） */
+.mini {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 90;
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 999px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 45%);
+}
+
+.miniRow {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.miniText {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-1);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-xs);
+}
+
+.title {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-2);
+}
+
+.iconButton {
+  border: none;
+  background: transparent;
+  color: var(--mantine-color-night287-2);
+  cursor: pointer;
+  font-size: var(--mantine-font-size-md);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.iconButton:hover {
+  color: var(--mantine-color-night287-0);
+  background: var(--mantine-color-night287-7);
+}
+
+.lanes {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+}
+
+.lane {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.name {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-night287-0);
+  flex: 0 0 auto;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name:hover {
+  text-decoration: underline;
+}
+
+.state {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-3);
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stateError {
+  composes: state;
+  color: var(--mantine-color-komichi-6);
+}
+
+.retry {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font-size: var(--mantine-font-size-xs);
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.volume {
+  width: 64px;
+  accent-color: var(--mantine-color-night287-4);
+  flex: 0 0 auto;
+}
+
+.stopButton {
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-2);
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.stopButton:hover {
+  border-color: var(--mantine-color-komichi-6);
+  color: var(--mantine-color-komichi-6);
+}
+
+.stopAll {
+  border: 1px solid var(--mantine-color-night287-6);
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: var(--mantine-font-size-sm);
+  cursor: pointer;
+}
+
+.stopAll:hover {
+  border-color: var(--mantine-color-night287-4);
+  color: var(--mantine-color-night287-0);
+}
+
+/* 移动端：底部全宽贴边 + 安全区 */
+@media (max-width: 48em) {
+  .panel,
+  .mini {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    border-radius: 12px 12px 0 0;
+    padding-bottom: calc(var(--mantine-spacing-sm) + env(safe-area-inset-bottom, 0px));
+  }
+}
