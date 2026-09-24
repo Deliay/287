@@ -422,6 +422,9 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   // 播放推进：切换关注窗口 + 过半预取下一窗
   useEffect(() => {
     if (!Number.isFinite(recordStartMs)) return;
+    // R15-5：跨窗 seek 期间窗口锚定 seekTo 已聚焦的目标窗——旧播放 timeupdate 回写的旧位置
+    // 不得切窗（会中止目标窗在途首拉 → 落位后重拉的双拉与进度回跳）；落位/失败后 seeking 归零自然恢复
+    if (seeking) return;
     const offset = currentTime * 1000;
     const index = windowIndexFor(offset);
     if (index !== lastWindowRef.current) {
@@ -429,7 +432,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       focusWindow(index);
     }
     prefetchNext(offset);
-  }, [recordStartMs, currentTime, focusWindow, prefetchNext]);
+  }, [recordStartMs, currentTime, seeking, focusWindow, prefetchNext]);
 
   // 事件列表自动跟随高亮
   useEffect(() => {

@@ -299,6 +299,26 @@ describe("录播 API 封装 types/api（T1）", () => {
     expect(events.items[0]?.sender.medal).toBeNull();
   });
 
+  it("R15-2 缺失/非法 state 的状态项跳过：不产生任何 recording 项（防假直播态）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          items: [
+            { mid: 1, roomId: 101 }, // 缺 state
+            { mid: 2, roomId: 102, state: "weird" }, // 非法 state
+            { mid: 3, roomId: 103, state: "not_live" }, // 合法：保留
+          ],
+        }),
+      ),
+    );
+    const status = await fetchRecordingStatus();
+    // 红：当前缺/非法 state 被强转 recording → items 长度 3 且含 recording 项
+    expect(status.items).toHaveLength(1);
+    expect(status.items[0]?.state).toBe("not_live");
+    expect(status.items.some((item) => item.state === "recording")).toBe(false);
+  });
+
   it("次要10 fetchLiveEvents 钳制 pageSize≤100 且查询区间≤12h（上游契约）", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ total: 0, items: [] }));
     vi.stubGlobal("fetch", fetchMock);

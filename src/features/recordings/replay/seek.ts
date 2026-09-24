@@ -284,6 +284,10 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutc
 
   const scanResult = await readAndScanSeekWindow(response, baseOffset, scanBytes);
   if (!scanResult) {
+    // 「扫描失败」同为阶段边界，必须先复查（审核 R15-1）：abort 使 read()/arrayBuffer() 抛错被吞
+    // 即返回 null，不复查会以「扫描失败」报错覆盖超时文案并清掉落位监控（违背 R6-a/R7-a/R9-b 不变量）
+    if (aborted()) return { ok: false, reason: "aborted" };
+    if (generation !== seekGeneration) return { ok: false, reason: "stale" };
     console.error("[recordings] seek: 窗口读取失败或超上限");
     return { ok: false, reason: "scan-failed" };
   }
@@ -293,6 +297,8 @@ export async function seekUnbuffered(args: SeekUnbufferedArgs): Promise<SeekOutc
 
   const boundary = scanResult.keyframe ?? scanResult.fallback;
   if (boundary) {
+    // 结构性取舍留痕（审核 R15-1 可选项）：applySeek 为不可中断的媒体操作，其执行窗口内被 abort
+    // 仍会触碰媒体——复查也无法回滚；作废后由**保留的落位监控**按归属收敛（R7-a），此处不加复查。
     try {
       const applied = await applySeek(boundary.fileposition, boundary.milliseconds);
       if (applied === false) {

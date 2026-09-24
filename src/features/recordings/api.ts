@@ -80,10 +80,12 @@ function parseStatusItem(raw: unknown): RecordingStatusResponse["items"][number]
   if (!isRecord(raw)) return null;
   const { mid, roomId, state, sessionTitle, files, updatedAt, streamer } = raw;
   if (typeof mid !== "number" || typeof roomId !== "number") return null;
+  // R15-2：state 为必要判定字段，缺失/非法即跳过本条——不再强转 recording（假直播态防护），与注释声明一致
+  if (state !== "recording" && state !== "not_live") return null;
   return {
     mid,
     roomId,
-    state: state === "not_live" ? "not_live" : "recording",
+    state,
     sessionTitle: typeof sessionTitle === "string" ? sessionTitle : null,
     files: Array.isArray(files) ? files.filter((file): file is string => typeof file === "string") : [],
     updatedAt: typeof updatedAt === "string" ? updatedAt : "",

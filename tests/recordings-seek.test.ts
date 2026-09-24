@@ -226,6 +226,53 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.reason).toBe("patch-missing");
   });
+
+  // R15-1：扫描阶段（reader.read 挂起）被 abort —— 「扫描失败」分支必须先复查终局作废
+  it("R15-1 扫描期被 abort → outcome.reason 为 aborted（当前为 scan-failed，绕过终局作废复查）", async () => {
+    const controller = new AbortController();
+      let readStarted = false;
+      const reader = {
+        read: () => {
+          readStarted = true;
+          return new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => {
+            controller.signal.addEventListener("abort", () => reject(new Error("read aborted")), {
+              once: true,
+            });
+          });
+        },
+        cancel: () => Promise.resolve(),
+      };
+      const fetchFn = vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 206,
+            headers: {
+              get: (name: string) =>
+                ({
+                  "content-range": "bytes 0-999/1000000",
+                  "content-length": "1000",
+                })[name.toLowerCase()] ?? null,
+            },
+            body: { getReader: () => reader },
+          }) as unknown as Response,
+      );
+
+    const pending = seekUnbuffered({
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 500,
+      durationSeconds: 3600,
+      fileSize: 10_000_000,
+      fetchFn,
+      signal: controller.signal,
+    });
+    for (let i = 0; i < 50 && !readStarted; i += 1) await Promise.resolve();
+    expect(readStarted).toBe(true); // 确认已进入扫描阶段
+    controller.abort();
+    const outcome = await pending;
+    // 红：当前 scan-failed 分支直接 return，不复查 aborted() → reason 为 "scan-failed"
+    expect(outcome).toEqual({ ok: false, reason: "aborted" });
+  });
 });
 
 describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T13）", () => {
@@ -438,6 +485,61 @@ describe("performSeek：缓冲内直跳 / 未缓冲编排 / 看门狗（T11、T1
     expect(firstOk).toBe(false);
     expect(staleFailed).not.toHaveBeenCalled();
     expect(freshFailed).not.toHaveBeenCalled();
+  });
+
+  // R15-1：performSeek 分发层——扫描期 abort 必须分流到 onAborted（静默收敛），不得走 onFailed
+  it("R15-1 扫描期被 abort → onAborted 收敛且不调用 onFailed（超时文案不被 scan-failed 覆盖）", async () => {
+    const controller = new AbortController();
+      let readStarted = false;
+      const reader = {
+        read: () => {
+          readStarted = true;
+          return new Promise<{ done: boolean; value?: Uint8Array }>((_, reject) => {
+            controller.signal.addEventListener("abort", () => reject(new Error("read aborted")), {
+              once: true,
+            });
+          });
+        },
+        cancel: () => Promise.resolve(),
+      };
+      const fetchFn = vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 206,
+            headers: {
+              get: (name: string) =>
+                ({
+                  "content-range": "bytes 0-999/1000000",
+                  "content-length": "1000",
+                })[name.toLowerCase()] ?? null,
+            },
+            body: { getReader: () => reader },
+          }) as unknown as Response,
+      );
+
+    const onFailed = vi.fn();
+    const onAborted = vi.fn();
+
+    const pending = performSeek({
+      video: makeVideo({ currentTime: 0 }),
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 500,
+      durationSeconds: 3600,
+      fileSize: 10_000_000,
+      fetchFn,
+      signal: controller.signal,
+      onFailed,
+      onAborted,
+    });
+    for (let i = 0; i < 50 && !readStarted; i += 1) await Promise.resolve();
+    expect(readStarted).toBe(true);
+    controller.abort();
+    const ok = await pending;
+    expect(ok).toBe(false);
+    // 红：当前 scan-failed → performSeek 调 onFailed（覆盖超时文案）且不走 onAborted
+    expect(onAborted).toHaveBeenCalled();
+    expect(onFailed).not.toHaveBeenCalled();
   });
 
   it("isTimeBuffered 判定缓冲区间（含边界）", () => {

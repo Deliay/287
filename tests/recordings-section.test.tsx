@@ -549,6 +549,37 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     // 不为标题新增任何请求（R14-1 前提）
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("R15-3 状态就绪补跑不强制展开用户已收起的分组（waiting 期间手动收起优先）", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tree = (items: RecordingStatusItem[], statusKind: "loading" | "ok") => (
+      <MantineProvider theme={theme}>
+        <RecordingsSection items={items} statusKind={statusKind} />
+      </MantineProvider>
+    );
+    const { rerender } = rtlRender(tree([], "loading"));
+    const header = () =>
+      screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement;
+
+    fireEvent.click(header()); // 展开 → 等待直播状态（requestedRef 置位）
+    await flushMicrotasks();
+    expect(header()).toHaveAttribute("aria-expanded", "true");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.click(header()); // 用户在等待期间手动收起（toggle 允许）
+    expect(header()).toHaveAttribute("aria-expanded", "false");
+
+    rerender(tree(statusItems, "ok")); // 状态就绪 → 补跑挂起的加载
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await flushMicrotasks();
+    // 红：当前补跑复用 load() 首行无条件 setExpanded(true) → 分组被强制重新展开
+    expect(header()).toHaveAttribute("aria-expanded", "false");
+    expect(fetchMock).toHaveBeenCalledTimes(1); // 静默加载，无重复取数
+  });
 });
 
 async function flushMicrotasks(): Promise<void> {

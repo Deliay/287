@@ -270,6 +270,22 @@
   - 【自查】上述每句修复描述均可按所注 文件:行 指认；R13–R14 未触碰面与门禁、每轮必查项随本轮返工说明一并提交。
 
 
+- **第十三轮返工（2026-09-24 · R15，AI 代码审核十三轮：R14 五项+次要逐条验收通过后，全量变更复核发现 1×P2 + 4×P3）**：
+  (R15-1 · P2) seek「扫描失败」分支绕过终局作废复查：`scanResult` 为 null 时先复查 `aborted()`/代次再报 `scan-failed`；apply 段间隙补复查或留痕声明取舍。红测试：seek 层注入 fetchFn 使响应体 read 挂起至 abort → `outcome.reason === "aborted"`（当前为 "scan-failed"）。
+  (R15-2 · P3) `parseStatusItem`：`state` 非 recording/not_live 即 `return null`，杜绝缺/非法 state 强转 recording 的假直播态。
+  (R15-3 · P3) 状态就绪补跑不得强制展开用户已收起的分组——静默加载或推迟到再展开，二选一并留痕。
+  (R15-4 · P3) `role=button` 卡片内嵌交互控件：修复（改承载方式/调整角色）或设计 §6 增列勘误，二选一，不得静默保持。
+  (R15-5 · P3) 跨窗未缓冲 seek 抖动：修复（seeking 期间锁定显示/窗口锚定目标窗）或留痕声明取舍。
+  【实现留痕（实现节点 · 2026-09-24 · 逐项先红后绿；红证均为当前代码下实测输出原文）】
+  - (R15-1) `src/features/recordings/replay/seek.ts:287-292` 扫描失败分支补复查：先 `if (aborted()) return { ok: false, reason: "aborted" }`，再 `generation !== seekGeneration → "stale"`，最后才 console + `scan-failed`——顺序与既有「响应后/扫描后/apply 前」复查（:247-259、:294-296、:318）一致，失败分支不再绕开「扫描后复查」。apply 段间隙按打回允许的第二选项**以注释留痕结构性取舍**：`seek.ts:300-302` 声明 `applySeek` 为不可中断的媒体操作、执行窗口内被 abort 仍会触碰媒体（复查无法回滚），由保留的落位监控按归属收敛（R7-a），不加无效复查。红测试两例：`tests/recordings-seek.test.ts:231`（seekUnbuffered 层：注入 fetchFn 返回 body.getReader() 挂起、read 至 `controller.abort()` 才抛）——红证 `AssertionError: expected { ok: false, reason: 'scan-failed' } to deeply equal { ok: false, reason: 'aborted' }`；`tests/recordings-seek.test.ts:491`（performSeek 分发层）——红证 `AssertionError: expected "vi.fn()" to be called at least once`（onAborted 未被调用，同时断言 onFailed not called）。绿后：outcome=aborted、onAborted 收敛、onFailed 零调用——超时文案不再被 scan-failed 覆盖、onFailed 不再清落位监控。
+  - (R15-2) `src/features/recordings/api.ts:83-84` 注释与实现对齐：一行守卫 `if (state !== "recording" && state !== "not_live") return null;`（缺/非法 state 跳过该条）。红测试 `tests/recordings-api.test.ts:302`——红证 `AssertionError: expected [ { mid: 1, roomId: 101, …(5) }, …(2) ] to have a length of 1 but got 3`（缺 state 与 `"weird"` 被强转 recording）。
+  - (R15-3) `src/features/recordings/recordings-section.tsx:68` `load` 改收 `options?: { expand?: boolean }`（:71-73 条件展开），`:113-115` 状态就绪补跑改 `void load({ expand: false })`——**口径选定：静默加载**（数据照常取回，展开态完全由用户显式操作决定；其后重展开由 `loadedRef` 命中不重复取数）。红测试 `tests/recordings-section.test.tsx:553`——红证 `Error: expect(element).toHaveAttribute("aria-expanded", "false") ... Received: aria-expanded="true"`（补跑强制重新展开）。
+  - (R15-4) **选定修复**（未走设计勘误）：`src/features/recordings/live-status-grid.tsx:190-195` 移除 `<article role="button">` 的 role 属性（tabIndex / aria-label / Enter 定位 / click 承载全部保留，:190 注释声明取舍），内层「听直播/重试」保持真实 button 供读屏暴露。红测试 `tests/recordings-live-status.test.tsx:358`——红证 `AssertionError: expected 'button' not to be 'button'`；绿后同用例固化 tabindex=0、aria-label 含「直播状态卡片」、内层 `/^听/` button 经 role 查询可达。
+  - (R15-5) **选定修复（窗口锚定方案，非显示锁定）**：`src/features/recordings/replay/replay-stage.tsx:425-435` 窗口 effect 增加 `if (seeking) return;` 守卫（deps 补 `seeking`）——seek 在途期间旧播放 timeupdate 回写的旧位置不再切窗/中止目标窗在途首拉（seekTo 发起时已 `focusWindow(目标窗)`），落位/失败后 `seeking` 归零自然恢复窗口跟随与下一窗预取。红测试 `tests/recordings-replay-stage.test.tsx:208`（按窗口 `start` 归窗断言）——红证 `AssertionError: expected true to be false`（目标窗首拉 `signal.aborted === true`，即被自家中止→落位后重拉的双拉）。
+  - 【测试适配（非语义回退）】其一：R14-2① 由「waitFor 卡片存在 + 同步 toContain」改为「waitFor 到 toContain 标题」——并行负载下卡片首帧（loading 兜底态）与 status 解析存在首帧竞态，断言语义不变（红证文本同为 `to contain '上次的直播'`）；其二：R15-5 用例按窗口 `start` 归窗过滤目标调用（挂载焦点窗+相邻窗预取会产生额外 fetchEvents 调用，不以 `calls[1]` 下标定位）。
+  - 【不可回退自查】R1–R14 语义零回退：本轮修复面=seek.ts 扫描失败分支复查块（+apply 段取舍注释）、api.ts:83-84 一行、recordings-section.tsx 展开策略两处、grid role 一行（行为不变）、replay-stage 窗口 effect 一个守卫，及上述新测试；R14 五项与其测试断言、R13 unsupported 口径、R12-a/b/c/d、R11/R10、R9/R7/R6、多路音频语义未触碰。门禁（T15 顺序）与每轮必查项随本轮返工说明一并提交。
+
+
 ### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。

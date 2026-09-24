@@ -65,10 +65,11 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   /** 在途去重：连点/定位与补跑 effect 双触发只取一次（审核次要6 · R14-1 后无视口触发面） */
   const inflightRef = useRef(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { expand?: boolean }) => {
     requestedRef.current = true;
-    // 触发加载即视为展开：点击/定位触发后 aria-expanded / 箭头与内容保持一致（审核次要9 · R14-1）
-    setExpanded(true);
+    // 触发加载即视为展开：点击/定位触发后 aria-expanded / 箭头与内容保持一致（审核次要9 · R14-1）；
+    // 状态就绪补跑传 expand:false——静默加载，不得强制展开用户已收起的分组（审核 R15-3）
+    if (options?.expand !== false) setExpanded(true);
     if (loadedRef.current) return;
     if (inflightRef.current) return;
     setPage(1);
@@ -109,9 +110,9 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
     if (statusKind !== "ok") return;
     if (!requestedRef.current) return;
     if (state.kind !== "waiting" && state.kind !== "status-error") return;
-    // 状态就绪/恢复时补跑挂起的加载：load 内首个 setState 仅为展开态标记，其后取数为异步
+    // 状态就绪/恢复时补跑挂起的加载（静默：用户显式收起优先，不改展开态；审核 R15-3）
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void load();
+    void load({ expand: false });
   }, [statusKind, state.kind, load]);
 
   // 状态卡片点击定位（设计 §2.3）：展开并加载对应分组；失败态再次定位即重试（审核次要6）

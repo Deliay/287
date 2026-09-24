@@ -205,6 +205,41 @@ describe("回放舞台 ReplayStage（T13 / AC-5、AC-6、AC-7）", () => {
     expect(GLYPH_RE.test(group.textContent ?? "")).toBe(false);
   });
 
+  it("R15-5 跨窗未缓冲 seek 期间旧播放 timeupdate 不切窗：目标窗首拉不被自家中止（无双拉）", async () => {
+    const fetchEvents = vi.fn((params: { start: string; signal?: AbortSignal }) => {
+      void params; // 仅类型需要：请求保持挂起（在途），用例按 start 归窗断言
+      return new Promise<{ total: number; items: LiveEvent[] }>(() => {});
+    });
+    const performSeek = vi.fn(() => new Promise<boolean>(() => {})); // seek 全程在途
+    const deps = makeDeps({ fetchEvents, performSeek });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+
+    const callsForWindow = (index: number) =>
+      fetchEvents.mock.calls.filter(
+        (call) => Date.parse(call[0].start) === START_MS + index * 600_000,
+      );
+
+    // 挂载已发起窗口拉取（焦点窗 + 相邻窗预取不计其详，按 start 归窗断言）
+    await waitFor(() => expect(fetchEvents.mock.calls.length).toBeGreaterThan(0));
+
+    // 跨窗 seek：进度条拖到 1500s（窗口2 = floor(1_500_000/600_000)）并松手 → 目标窗首拉发起
+    const progress = screen.getByRole("slider", { name: "播放进度" }) as HTMLInputElement;
+    fireEvent.change(progress, { target: { value: "1500" } });
+    fireEvent.pointerUp(progress);
+    await waitFor(() => expect(callsForWindow(2)).toHaveLength(1));
+    const targetParams = callsForWindow(2)[0][0];
+    const totalBefore = fetchEvents.mock.calls.length;
+
+    // 扫描期间旧播放 timeupdate 回写旧位置（0s → 窗口0）
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    fireEvent.timeUpdate(video);
+    await flush();
+
+    // 红：当前窗口 effect 按旧位置切回窗口0 → focusWindow(0) 中止目标窗在途首拉（落位后重拉=双拉）
+    expect(targetParams.signal?.aborted).toBe(false);
+    expect(fetchEvents.mock.calls.length).toBe(totalBefore); // 也不产生重拉
+  });
+
   it("事件列表随播放 offset 高亮当前条目，点击条目按锚点换算 seek", async () => {
     const events = [makeEvent("e1", 10, "第一条"), makeEvent("e2", 61, "第二条"), makeEvent("e3", 120, "第三条")];
     const fetchEvents = vi.fn(() => Promise.resolve({ total: events.length, items: events }));

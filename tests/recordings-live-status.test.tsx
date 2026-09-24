@@ -314,8 +314,11 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(items)));
     renderWithTheme(<LiveStatusGrid />);
-    await waitFor(() => expect(screen.getByTestId("live-card-komichi")).toBeInTheDocument());
-    expect(screen.getByTestId("live-card-komichi").textContent).toContain("上次的直播");
+    // 卡片首帧即渲染（loading 兜底态）：标题须待 status 解析落库——以 waitFor 断言正向行为防首帧竞态
+    // （红证语义不变：修复前标题永不出现，waitFor 超时报 to contain '上次的直播'）
+    await waitFor(() =>
+      expect(screen.getByTestId("live-card-komichi").textContent).toContain("上次的直播"),
+    );
   });
 
   it("R14-3 「直播中」圆点取成员主题色（--mantine-color-{colorKey}-6，设计 §2.3 恢复口径）", async () => {
@@ -350,5 +353,19 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     expect(stop.getAttribute("aria-label")).toContain("停止");
     expect(stop.querySelector("svg")).not.toBeNull();
     expect(GLYPH_RE.test(stop.textContent ?? "")).toBe(false);
+  });
+
+  it("R15-4 卡片不使用 role=button（children presentational 会隐藏内层听直播控件），键盘与内层控件保持", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    renderWithTheme(<LiveStatusGrid />);
+    const card = await screen.findByTestId("live-card-viridis");
+
+    // 红：当前 <article role="button">，读屏下 children presentational 不暴露内层控件
+    expect(card.getAttribute("role")).not.toBe("button");
+    // 卡片键盘可达与定位激活保持（既有用例覆盖 Enter 定位）
+    expect(card).toHaveAttribute("tabindex", "0");
+    expect(card).toHaveAttribute("aria-label", expect.stringContaining("直播状态卡片"));
+    // 内层「听直播」仍以真实 button 暴露
+    expect(within(card).getByRole("button", { name: /^听/ })).toBeInTheDocument();
   });
 });

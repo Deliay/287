@@ -187,11 +187,12 @@ function MemberCard({ member, item, lane }: MemberCardProps) {
     revealGroup(event.target);
   };
 
+  // R15-4：不使用 role="button"——button 的 children-presentational 会让读屏不暴露内层
+  // 「听直播/重试」真实控件；卡片定位激活由 tabIndex + 键盘/click 承载，内层控件保持真实 button。
   return (
     <article
       data-testid={`live-card-${member.id}`}
       className={styles.card}
-      role="button"
       tabIndex={0}
       aria-label={`${member.name} 直播状态卡片，回车定位到录播分组`}
       onClick={handleCardClick}
