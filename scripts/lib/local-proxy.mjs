@@ -45,6 +45,8 @@ const RESPONSE_HEADERS = [
   "content-type",
   "content-length",
   "content-range",
+  // 与请求侧 accept-encoding 透传对称：压缩响应必须原样回传该头，否则客户端按明文解码必炸（审核 R11-a）
+  "content-encoding",
   "accept-ranges",
   "etag",
   "last-modified",
@@ -86,7 +88,11 @@ function matchPrefix(pathname, prefix) {
  * - 其余前缀 / 含 `..` 的路径穿越 → null（拒绝转发）
  */
 export function resolveUpstream(pathWithQuery, { recordingsOrigin, eventsOrigin }) {
-  const [rawPath, query = ""] = String(pathWithQuery).split("?");
+  // indexOf 一次性切分：query 中再含字面 ? 也不截断（审核 R11-c①）
+  const raw = String(pathWithQuery);
+  const queryIndex = raw.indexOf("?");
+  const rawPath = queryIndex >= 0 ? raw.slice(0, queryIndex) : raw;
+  const query = queryIndex >= 0 ? raw.slice(queryIndex + 1) : "";
   if (rawPath.includes("..")) return null;
 
   let origin = null;
@@ -139,7 +145,8 @@ export function corsHeaders(requestHeaders = {}) {
     "access-control-allow-origin": "*",
     "access-control-allow-methods": "GET, HEAD, OPTIONS",
     "access-control-allow-headers": "Range, Content-Type, Accept, Origin, X-Requested-With",
-    "access-control-expose-headers": "Content-Length, Content-Range, Accept-Ranges, Content-Type, ETag, Last-Modified",
+    "access-control-expose-headers":
+      "Content-Length, Content-Range, Content-Encoding, Accept-Ranges, Content-Type, ETag, Last-Modified",
     "access-control-max-age": "86400",
   };
   const requested =

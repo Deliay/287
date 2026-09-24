@@ -227,6 +227,9 @@
 - **第八轮返工留痕（2026-09-24 · R10）**：R10 不改动回放舞台代码（R1–R9 语义全部保持）；其影响集中在**本地验收通路**——回放页的未缓冲 seek（`seek.ts` Range 扫描 + 补丁 `seekToByteOffset`）与听直播 FLV 长连接在本地必须经 T15 反代透传 `Range`/流式响应才能验收，故 T13 的浏览器级验收步骤迁移至 **T15 人工验收清单**（回放含未缓冲 seek、弹幕事件、多路听直播）；T11/T12/T13 的单测覆盖不变。另注：直连与经代理的 Range 响应逐项一致（2026-09-24 实测），未缓冲 seek 行为在两种形态下等价。
 
 
+- **第九轮返工留痕（2026-09-24 · R11，scripts 工具面修复，src 零变更）**：R11-a 反代头策略对称——`pickResponseHeaders` 白名单补 `content-encoding`（与请求侧 `accept-encoding` 透传对称，避免上游启用压缩时代理裸传压缩体且不回该头导致客户端按明文解码），`corsHeaders.expose-headers` 同步补 `Content-Encoding`；R11-b 启动器 fail-fast——新增可测单元 `scripts/lib/dev-launcher.mjs`（`planLaunch` 反代未就绪一律 fail、`waitForProxyHealth` 单次探测带 **attemptTimeoutMs 与定时器赛跑**（哑端口 fetch 永久挂起也能推进超时判定）、`proxyStartupFailureMessage` 处置建议、`exitCodeFor` 退出码归一 code 优先/signal→128+n/未知返回1 不静默），`dev-with-proxy.mjs` 改为**等待就绪→未就绪即打印处置建议并 exit(1)**，绝不以失效注入基址启动 next dev，子进程 error/exit（code 为 null 按 signal）均显式收口；R11-c① `resolveUpstream` 改 `indexOf` 一次性切分（query 含字面 `?` 不截断）、R11-c② 门禁顺序注明（见 T15）。红测试：`tests/dev-launcher.test.ts` 6 例（含「健康探测请求挂起仍按时超时返回 false」）、`tests/local-proxy.test.ts` 新增3例（头策略一致 / query `?` 不截断 / mock 上游 `content-encoding: gzip` 端到端头体原样）。实测复现：端口占用下启动器 exit=1 且打印处置建议、next dev 未启动；健康路径 `local proxy ready ✓` + page/api 200。R1–R10 语义零回退（本轮仅改 scripts/ 与 tests/）。
+
+
 ### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。
@@ -251,6 +254,9 @@
 - **上线前置条件（R10-c，人工协调）**：两服务需将**本站生产域名**加入 CORS 白名单（当前仅 `https://sumire.live`）。复验命令：
   `curl -s -D- -o /dev/null -H "Origin: <生产域>" https://recordings.vtuber.fffdan.com/api/b/live/recording-status | grep -i access-control`（期望回显 `access-control-allow-origin: <生产域>`；弹幕服务对 `https://api.sumire.live/api/live-events/replay` 同法复验）。若无法获得白名单 → 线上直连不成立，回到提案 §5-1 退路（Worker 反代，与「线上直连」冲突）并**提交人工决策**，不得静默绕过或把线上改走代理。
 - **生产形态自查（R10-e③）**：`pnpm build` 后 `grep -c "127.0.0.1:8788" out/*.html out/_next/static/chunks/*.js` 为 0，且 bundle 内含 `recordings.vtuber.fffdan.com` / `api.sumire.live`（由 `tests/local-proxy.test.ts` 断言 + 门禁复跑）。
+
+
+- **门禁顺序（R11-c②）**：构建产物断言（`tests/local-proxy.test.ts`）在 `out/` 缺失时 `skipIf` 静默跳过——**干净克隆必须先 `pnpm build` 再 `pnpm test`**（或至少保证门禁含一次 build 后的复跑），否则该断言不会执行；本仓门禁口径：`pnpm build && pnpm test && pnpm lint && npx tsc --noEmit`。
 
 
 ## 2. 执行顺序与依赖

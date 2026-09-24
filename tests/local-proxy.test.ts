@@ -1,4 +1,5 @@
-import { createServer, type Server } from "node:http";
+import { createServer, get as httpGetRaw, type Server } from "node:http";
+import { gzipSync } from "node:zlib";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import {
   RECORDINGS_ORIGIN,
   corsHeaders,
   forwardHeaders,
+  pickResponseHeaders,
   parseProxyEnv,
   publicBases,
   resolveUpstream,
@@ -29,6 +31,22 @@ afterEach(async () => {
     await item?.close();
   }
 });
+
+function httpGet(
+  url: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const req = httpGetRaw(url, { headers }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (chunk: Buffer) => chunks.push(chunk));
+      res.on("end", () =>
+        resolve({ status: res.statusCode || 0, headers: res.headers, body: Buffer.concat(chunks) }),
+      );
+    });
+    req.on("error", reject);
+  });
+}
 
 function listen(server: Server): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -63,6 +81,64 @@ describe("本地验收反代：路径映射与头部策略（R10-a 单元）", (
     expect(resolveUpstream("/api/b/live/recording-status", cfg)).toBeNull();
     expect(resolveUpstream("/recordings/../etc/passwd", cfg)).toBeNull();
     expect(resolveUpstream("/events/..%2f..", cfg)).toBeNull();
+  });
+
+  it("R11-a 头策略一致：pickResponseHeaders 透传 content-encoding（与 accept-encoding 透传对称）", () => {
+    const picked = {
+      "content-type": "application/json",
+      "content-encoding": "gzip",
+      "content-length": "42",
+      "content-range": "bytes 0-1/2",
+      server: "kestrel",
+    };
+    const out = pickResponseHeaders(picked);
+    expect(out["content-encoding"]).toBe("gzip"); // 红：当前白名单缺 content-encoding → 压缩体裸传
+    expect(out["content-type"]).toBe("application/json");
+    expect(out.server).toBeUndefined();
+    // 请求侧对称：accept-encoding 必须透传（否则上游永远不压缩，策略仍不对称）
+    expect(forwardHeaders({ "accept-encoding": "gzip, deflate, br" })["accept-encoding"]).toBe(
+      "gzip, deflate, br",
+    );
+  });
+
+  it("R11-c① query 内含字面 ? 不被截断（indexOf 一次性切分）", () => {
+    expect(resolveUpstream("/events/api/live-events/replay?a=1&b=2?3", cfg)).toEqual({
+      origin: "https://evt.example",
+      path: "/api/live-events/replay?a=1&b=2?3", // 红：当前 split("?") 只取首段，尾部 ?3 丢失
+    });
+    expect(resolveUpstream("/recordings/api/b/live/1/recordings/f.flv", cfg)?.path).toBe(
+      "/api/b/live/1/recordings/f.flv",
+    );
+  });
+
+  it("R11-a 端到端：上游回 content-encoding: gzip 时代理原样转发头与压缩体（可被客户端解码）", async () => {
+    const payload = JSON.stringify({ items: [{ mid: 1 }], note: "compressed-upstream" });
+    const gzipped = gzipSync(Buffer.from(payload, "utf8"));
+    const upstream = createServer((_req, res) => {
+      res.writeHead(200, {
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+        "content-length": String(gzipped.length),
+      });
+      res.end(gzipped);
+    });
+    const upstreamPort = await listen(upstream);
+    closers.push({ close: () => new Promise((r) => upstream.close(() => r())) });
+
+    const proxy = await startProxy({
+      port: 0,
+      recordingsOrigin: `http://127.0.0.1:${upstreamPort}`,
+      eventsOrigin: `http://127.0.0.1:${upstreamPort}`,
+    });
+    closers.push(proxy);
+
+    // 用原生 http（不自动解码）验证「头体原样一致」
+    const raw = await httpGet(`http://127.0.0.1:${proxy.port}/recordings/api/b/live/x`, {
+      "accept-encoding": "gzip, deflate, br",
+    });
+    expect(raw.status).toBe(200);
+    expect(raw.headers["content-encoding"]).toBe("gzip"); // 红：头被白名单丢弃 → 明文解码必炸
+    expect(Buffer.from(raw.body).equals(gzipped)).toBe(true); // 体字节原样（不改写不重压）
   });
 
   it("Range 请求头透传，hop-by-hop 头（host/connection 等）剔除", () => {
