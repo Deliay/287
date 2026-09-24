@@ -11,8 +11,17 @@ import { liveAudioUrl } from "../api";
 /** 同时收听上限（= 成员数）。 */
 export const MAX_AUDIO_LANES = 4;
 
-/** 单路状态：加载中 / 播放中 / 失败（失败仅影响本路，见 FR-3）。 */
-export type LaneState = "loading" | "playing" | "error";
+/** MSE 不可用标记（错误 code）：浏览器无 MSE 时进入**不可重试**的降级态（审核 R12-b）。 */
+export const MSE_UNSUPPORTED_CODE = "MSE_UNSUPPORTED";
+
+/** 与设计 §2.5 / PRD §5 一致的降级文案（状态卡片与悬浮组件同步呈现）。 */
+export const MSE_DEGRADE_TEXT = "当前浏览器无法播放，请使用最新版 Chrome / Edge / Safari";
+
+/**
+ * 单路状态：加载中 / 播放中 / 失败 / **MSE 不可用降级**（审核 R12-b 新增）。
+ * 失败仅影响本路（FR-3）；降级态为环境性不可用，不提供重试。
+ */
+export type LaneState = "loading" | "playing" | "error" | "unsupported";
 
 /** 对外只读的单路快照。 */
 export interface AudioLane {
@@ -140,10 +149,11 @@ export class AudioPlayerRegistry {
     this.invalidate();
   }
 
-  /** 失败重试：销毁旧实例并以同音量重建（FR-3 重试入口）。 */
+  /** 失败重试：销毁旧实例并以同音量重建（FR-3 重试入口）；MSE 降级态不可重试（审核 R12-b）。 */
   retry(roomId: number): boolean {
     const lane = this.lanes.get(roomId);
     if (!lane) return false;
+    if (lane.state === "unsupported") return false;
     lane.generation += 1;
     lane.player?.destroy();
     lane.player = null;
@@ -173,6 +183,16 @@ export class AudioPlayerRegistry {
   private spawn(lane: LaneRecord, url: string): void {
     const generation = lane.generation;
     const isCurrent = () => this.lanes.get(lane.roomId) === lane && lane.generation === generation;
+    // 每代创建都复位就绪标记：上一代残留的 readyPending 不得让新 player 未经就绪即显「播放中」（审核 R12-d）
+    lane.readyPending = false;
+    const toLaneError = () => {
+      lane.readyPending = false; // 失败必须同时作废就绪挂起（审核 R12-d(1)）
+      lane.state = (lane.state === "unsupported" ? lane.state : "error") as LaneState;
+    };
+    const markUnsupported = () => {
+      lane.readyPending = false;
+      lane.state = "unsupported"; // 环境性不可用：不进 error、不提供重试（审核 R12-b）
+    };
 
     let result: LivePlayer | Promise<LivePlayer>;
     try {
@@ -189,13 +209,14 @@ export class AudioPlayerRegistry {
         },
         onError: () => {
           if (!isCurrent()) return;
-          lane.state = "error";
+          toLaneError();
           this.invalidate();
         },
       });
-    } catch {
+    } catch (error) {
       if (!isCurrent()) return;
-      lane.state = "error";
+      if ((error as { code?: string } | null)?.code === MSE_UNSUPPORTED_CODE) markUnsupported();
+      else toLaneError();
       this.invalidate();
       return;
     }
@@ -216,9 +237,10 @@ export class AudioPlayerRegistry {
     };
 
     if (result instanceof Promise) {
-      void result.then(settle).catch(() => {
+      void result.then(settle).catch((error: unknown) => {
         if (!isCurrent()) return;
-        lane.state = "error";
+        if ((error as { code?: string } | null)?.code === MSE_UNSUPPORTED_CODE) markUnsupported();
+        else toLaneError();
         this.invalidate();
       });
     } else {

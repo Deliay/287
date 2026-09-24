@@ -13,7 +13,11 @@ import { members, type Member } from "@/data/members";
 import { fetchRecordingStatus } from "./api";
 import type { RecordingStatusItem } from "./types";
 import { dispatchRevealGroup } from "./reveal-group";
-import { audioRegistry, type AudioLane } from "./live-audio/audio-player-registry";
+import {
+  MSE_DEGRADE_TEXT,
+  audioRegistry,
+  type AudioLane,
+} from "./live-audio/audio-player-registry";
 import styles from "./live-status-grid.module.css";
 
 /** 轮询间隔（FR-2：30 秒）。 */
@@ -109,6 +113,14 @@ function ListenButton({ member, item, lane }: MemberCardProps) {
       >
         重试
       </button>
+    );
+  }
+  if (lane?.state === "unsupported") {
+    // MSE 不可用：环境性降级，不提供听/停/重试入口（PRD §5，审核 R12-b）
+    return (
+      <span className={styles.degrade} role="status">
+        {MSE_DEGRADE_TEXT}
+      </span>
     );
   }
   if (lane) {

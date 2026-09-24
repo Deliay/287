@@ -187,6 +187,9 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
 
   const focusWindow = (index: number) => {
     if (roomId === null || startMs === null) return;
+    // 复活：dispose 只作「丢弃在途结果」的代次标记（其已 abort 全部在途），再次聚焦即恢复加载
+    // ——StrictMode 首挂载 setup→cleanup(dispose)→setup 必须可用（审核 R12-a）
+    disposed = false;
     const targetKey = keyFor(index);
     generation += 1;
     const current = generation;
@@ -253,10 +256,11 @@ export function createReplayEventsStore(options: CreateReplayEventsStoreOptions)
     eventsFor,
     retry,
     dispose() {
+      // 终局仅针对「在途结果」：abort + 标记丢弃；不清 listeners（订阅者自行退订，
+      // 且 StrictMode 的 setup→cleanup→setup 依赖其再次聚焦复活，审核 R12-a）
       disposed = true;
       for (const entry of inflight.values()) entry.controller.abort();
       inflight.clear();
-      listeners.clear();
     },
     get cache() {
       return cache;

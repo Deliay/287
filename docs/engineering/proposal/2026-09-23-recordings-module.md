@@ -149,7 +149,7 @@ interface LiveEvent {
 
 ```ts
 // live-audio/audio-player-registry.ts
-type LaneState = "loading" | "playing" | "error";
+type LaneState = "loading" | "playing" | "error" | "unsupported"; // unsupported：MSE 不可用，不可重试降级（2026-09-24，审核 R12-b）
 interface AudioLane { roomId: number; state: LaneState; volume: number; label?: string; colorKey?: string; }
 play(roomId: number, meta?: { label: string; colorKey: string }): boolean; // 幂等；超过 4 路返回 false
 stop(roomId: number): void;

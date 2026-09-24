@@ -149,7 +149,13 @@ export async function startReplay(args: StartReplayArgs): Promise<boolean> {
   player.attachMediaElement(args.media);
   player.on(mpegts.Events.ERROR, args.onError);
   player.load();
-  if (args.autoplay) void player.play();
+  if (args.autoplay) {
+    // play() 拒绝（自动播放策略等）必须收口：不得留 unhandled rejection（审核 次-1）
+    void Promise.resolve(player.play()).catch((error: unknown) => {
+      console.error("[recordings] replay play() rejected", error);
+      args.onError();
+    });
+  }
   currentPlayer = player;
   currentUrl = args.url;
   return true;
@@ -175,9 +181,16 @@ export function pauseReplay(): void {
   currentPlayer?.pause();
 }
 
-/** 继续播放回放。 */
-export function resumeReplay(): void {
-  void currentPlayer?.play();
+/** 继续播放回放：`play()` 被拒绝时捕获并返回 false（调用方据此复位 playing 态，审核 次-1）。 */
+export async function resumeReplay(): Promise<boolean> {
+  if (!currentPlayer) return false;
+  try {
+    await currentPlayer.play();
+    return true;
+  } catch (error) {
+    console.error("[recordings] replay resume play() rejected", error);
+    return false;
+  }
 }
 
 /** 从字节偏移续播（依赖补丁方法）；补丁缺失/异常时显性返回 false。 */

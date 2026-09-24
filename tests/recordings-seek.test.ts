@@ -19,6 +19,7 @@ import {
   computeBufferConfig,
   destroyReplay,
   isPlaybackSupported,
+  resumeReplay,
   setMpegtsLoader,
   startReplay,
   type MpegtsLike,
@@ -174,7 +175,7 @@ describe("seek：码率折算与 FLV tag 扫描（T11 / AC-6）", () => {
     expect(seekToByteOffset).not.toHaveBeenCalled();
   });
 
-  it("窗口读取超出上限时取消读取（绝不无限读入）", async () => {
+  it("窗口读取超上限时取消读取并降级直试（补丁接受即发起成功，审核 次-3④ 名实对齐）", async () => {
     const cancel = vi.fn(async () => {});
     const huge = new Uint8Array(MAX_WINDOW_READ_BYTES + 1);
     let step = 0;
@@ -518,6 +519,83 @@ describe("flv-player：MSE 支持探测与缓冲预算（T11 / AC-5）", () => {
     // 时长未知时按保守高码率兜底，不为 0
     const fallback = computeBufferConfig(50_000_000, 0);
     expect(fallback.lazyLoadMaxDuration).toBeGreaterThan(0);
+  });
+
+  it("流式主路径跨 chunk 超过扫描上限时截断并取消读取（不再继续 read）", async () => {
+    const cancel = vi.fn(async () => {});
+    let reads = 0;
+    const chunkA = new Uint8Array(200_000); // 第一块 < cap（262144）
+    const chunkB = new Uint8Array(100_000); // 第二块越过 cap → 截断并 cancel
+    const reader = {
+      read: vi.fn(async () => {
+        reads += 1;
+        if (reads === 1) return { done: false as const, value: chunkA };
+        if (reads === 2) return { done: false as const, value: chunkB };
+        return { done: true as const, value: undefined };
+      }),
+      cancel,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 206,
+        headers: { get: () => null },
+        body: { getReader: () => reader },
+      }),
+    );
+    const seekToByteOffset = vi.fn(() => false);
+    const outcome = await seekUnbuffered({
+      url: "https://rec.example.com/a.flv",
+      targetSeconds: 10,
+      durationSeconds: 120,
+      fileSize: 1_000_000,
+      seekToByteOffset,
+    });
+    // 超上限：取消剩余下载且不再 read（arrayBuffer 回退之外的流式主路径）
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(reader.read).toHaveBeenCalledTimes(2);
+    expect(outcome.ok).toBe(false);
+    expect(outcome.reason).toBe("patch-missing"); // 降级直试被补丁拒绝（本用例注入）
+  });
+
+  it("次-1 play() 被拒绝时收口：resumeReplay 返回 false、autoplay 路径触发 onError（不产生 unhandled rejection）", async () => {
+    const player = {
+      attachMediaElement: vi.fn(),
+      load: vi.fn(),
+      play: vi.fn(() => Promise.reject(new Error("NotAllowedError"))),
+      destroy: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      seekToByteOffset: vi.fn(),
+      setBufferLimits: vi.fn(),
+    };
+    const restore = setMpegtsLoader(() =>
+      Promise.resolve({
+        isSupported: () => true,
+        createPlayer: vi.fn(() => player),
+        Events: { MEDIA_INFO: "media_info", ERROR: "error" },
+      } as unknown as MpegtsLike),
+    );
+
+    const onError = vi.fn();
+    const media = document.createElement("video");
+    const started = await startReplay({
+      url: "https://rec.example.com/a.flv",
+      media,
+      fileSize: 1_000_000,
+      onError,
+      autoplay: true, // 触发 player.play() 拒绝路径
+    });
+    expect(started).toBe(true);
+    for (let index = 0; index < 5; index += 1) await Promise.resolve();
+    expect(onError).toHaveBeenCalled(); // 红：void player.play() 无 catch → 拒绝被吞/未回调
+
+    // resume 路径同样收口（红：当前返回 void，非 Promise）
+    await expect(resumeReplay()).resolves.toBe(false);
+
+    destroyReplay();
+    restore();
   });
 
   it("次要8 computeBufferConfig 启用 autoCleanupSourceBuffer（否则回退 40% 清理是死配置）", () => {

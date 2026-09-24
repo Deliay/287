@@ -179,6 +179,60 @@ describe("多路音频注册表（T3 / AC-3）", () => {
     expect(registry.getLanesSnapshot()[0]?.state).toBe("playing");
   });
 
+  it("R12-b MSE 不可用 → 该路进入不可重试的降级态（unsupported）+ 降级文案由 UI 呈现", async () => {
+    const factory: LivePlayerFactory = () =>
+      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: "MSE_UNSUPPORTED" }));
+    const registry = createAudioPlayerRegistry(factory);
+
+    expect(registry.play(7)).toBe(true);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("unsupported"); // 红：当前折算成可重试的 error
+    expect(registry.retry(7)).toBe(false); // 降级态不可重试（重试无意义）
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("unsupported");
+  });
+
+  it("R12-d(1) onReady 先到 → onError → settle：终态必须 error（不得假「播放中」）", async () => {
+    const holder: { cb?: { onReady: () => void; onError: () => void } } = {};
+    let settle!: (value: LivePlayer | PromiseLike<LivePlayer>) => void;
+    const factory: LivePlayerFactory = (args) => {
+      holder.cb = args;
+      return new Promise((resolve) => {
+        settle = resolve;
+      });
+    };
+    const registry = createAudioPlayerRegistry(factory);
+    registry.play(8);
+
+    holder.cb?.onReady(); // 就绪事件先于 settle（player 尚未挂上）
+    holder.cb?.onError(); // 随后失败
+    settle({ setVolume: vi.fn(), destroy: vi.fn() });
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("error"); // 红：settle 见 readyPending 强改 playing
+  });
+
+  it("R12-d(2) retry 复位 readyPending：新 player 未就绪前不得显示 playing", async () => {
+    let firstFactoryCall = true;
+    const factory: LivePlayerFactory = (args) => {
+      if (firstFactoryCall) {
+        firstFactoryCall = false;
+        args.onReady(); // 先到的就绪事件（落进 readyPending）
+        return new Promise<never>(() => {}); // 永不 settle
+      }
+      // 新一代：不发 onReady 就直接交付 player（模拟「还没就绪」）
+      return { setVolume: vi.fn(), destroy: vi.fn() };
+    };
+    const registry = createAudioPlayerRegistry(factory);
+    registry.play(9);
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("loading");
+
+    expect(registry.retry(9)).toBe(true);
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+
+    expect(registry.getLanesSnapshot()[0]?.state).toBe("loading"); // 红：上一代 readyPending 残留 → playing
+  });
+
   it("次要4/次要12 同步抛错的工厂标记该路 error，且不阻塞后续 play（由 lanes map 保证）", () => {
     let shouldThrow = true;
     const factory: LivePlayerFactory = () => {

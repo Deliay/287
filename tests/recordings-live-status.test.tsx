@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, renderHook, screen, waitFor } from "@testing-library/react";
 import { LiveStatusGrid, useRecordingStatus } from "@/features/recordings/live-status-grid";
+import { FloatingAudioPlayer } from "@/features/recordings/live-audio/floating-audio-player";
 import {
   audioRegistry,
   setLivePlayerFactory,
@@ -220,6 +221,31 @@ describe("直播状态列表 LiveStatusGrid / useRecordingStatus（T6 / AC-2、A
     });
     expect(screen.getByRole("button", { name: /重试小松绿/ })).toBeInTheDocument();
     expect(screen.getByTestId("live-card-sumire").querySelector("button")).toHaveTextContent("听直播");
+  });
+
+  it("R12-b 无 MSE 环境点「听直播」→ 卡片与悬浮组件呈现降级文案，且不提供重试/停止按钮", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(statusSample)));
+    restoreFactory = setLivePlayerFactory(() =>
+      Promise.reject(Object.assign(new Error("当前浏览器不支持 MSE"), { code: "MSE_UNSUPPORTED" })),
+    );
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <FloatingAudioPlayer />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByText("重生之我是钓鱼大师")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("live-card-viridis").querySelector("button") as HTMLElement);
+    // 红：当前落入 error + 「重试」循环，且无降级文案
+    await waitFor(() =>
+      expect(screen.getAllByText(/当前浏览器无法播放/).length).toBeGreaterThan(0),
+    );
+    // 状态卡片与悬浮组件**各自**同步呈现（PRD §5 兼容性，审核 R12-b）
+    expect(screen.getByTestId("live-card-viridis").textContent).toContain("当前浏览器无法播放");
+    expect(screen.getByTestId("floating-audio-player").textContent).toContain("当前浏览器无法播放");
+    expect(screen.queryByRole("button", { name: /重试/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /停止收听/ })).not.toBeInTheDocument();
   });
 
   it("次要5 并发竞态：旧响应不得覆盖新数据（轮询/重试/visibility 叠加）", async () => {

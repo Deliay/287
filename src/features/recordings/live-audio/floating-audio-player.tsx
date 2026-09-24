@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import {
+  MSE_DEGRADE_TEXT,
   audioRegistry,
   type AudioLane,
   type LaneState,
@@ -26,6 +27,7 @@ const STATE_TEXT: Record<LaneState, string> = {
   loading: "加载中…",
   playing: "播放中",
   error: "失败",
+  unsupported: MSE_DEGRADE_TEXT, // MSE 环境性降级，与状态卡片同文案（审核 R12-b）
 };
 
 /**
@@ -115,7 +117,9 @@ export function FloatingAudioPlayer() {
                     </Link>
                     <span
                       className={
-                        lane.state === "error" ? styles.stateError : styles.state
+                        lane.state === "error" || lane.state === "unsupported"
+                          ? styles.stateError
+                          : styles.state
                       }
                     >
                       {STATE_TEXT[lane.state]}

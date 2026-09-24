@@ -587,8 +587,11 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
       pauseReplay();
       setPlaying(false);
     } else {
-      resumeReplay();
+      // 乐观置位；play() 被拒绝（自动播放策略等）时复位，避免假「暂停」按钮态（审核 次-1）
       setPlaying(true);
+      void resumeReplay().then((ok) => {
+        if (!ok) setPlaying(false);
+      });
     }
   };
 

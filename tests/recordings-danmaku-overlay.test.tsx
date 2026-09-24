@@ -228,6 +228,33 @@ describe("弹幕浮层 danmaku-overlay（T12 / AC-7）", () => {
     return created;
   }
 
+  it("R12-c 暂停态关闭弹幕开关也立即清屏（currentTime 不变不得短路清屏）", () => {
+    const { scheduler, runFrame } = manualScheduler();
+    const events = [makeEvent("m1", 11, "在飞弹幕")];
+    const { rerender } = renderOverlay({ events, currentTime: 10, scheduler });
+    runFrame();
+
+    // 发射一条在飞弹幕
+    rerender(
+      <DanmakuOverlay events={events} recordStartMs={START_MS} currentTime={11} playing enabled scheduler={scheduler} />,
+    );
+    expect(runFrame()).toContain("在飞弹幕");
+
+    // 暂停（currentTime 不变）并关闭开关 → 必须清屏
+    ctx.fillText.mockClear();
+    rerender(
+      <DanmakuOverlay
+        events={events}
+        recordStartMs={START_MS}
+        currentTime={11}
+        playing={false}
+        enabled={false}
+        scheduler={scheduler}
+      />,
+    );
+    expect(runFrame()).toHaveLength(0); // 红：prev===currentTime 提前 return，清屏被短路 → 冻结残影重绘
+  });
+
   it("次要7 表情弹幕高度不超过轨道高（不与相邻轨道重叠）", () => {
     const images = makeTrackedImage();
     const { scheduler, runFrame } = manualScheduler();

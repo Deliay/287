@@ -390,13 +390,14 @@ export function DanmakuOverlay({
     const prev = prevRef.current;
     prevRef.current = currentTime;
 
-    if (prev === currentTime) return;
-
-    // 弹幕开关关闭：清屏（在飞弹幕立即消失），且 seek 也不再重建（审核次要7）
+    // 弹幕开关关闭：清屏（在飞弹幕立即消失），且 seek 也不再重建（审核次要7）。
+    // 必须在「prev === currentTime」早退之前——暂停态（时间不前进）切换开关也要清屏（审核 R12-c）
     if (!enabled) {
       renderer.clear();
       return;
     }
+
+    if (prev === currentTime) return;
 
     const offsets = danmakuOffsets(events, recordStartMs);
     if (isSeekJump(prev, currentTime)) {

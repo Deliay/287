@@ -230,6 +230,18 @@
 - **第九轮返工留痕（2026-09-24 · R11，scripts 工具面修复，src 零变更）**：R11-a 反代头策略对称——`pickResponseHeaders` 白名单补 `content-encoding`（与请求侧 `accept-encoding` 透传对称，避免上游启用压缩时代理裸传压缩体且不回该头导致客户端按明文解码），`corsHeaders.expose-headers` 同步补 `Content-Encoding`；R11-b 启动器 fail-fast——新增可测单元 `scripts/lib/dev-launcher.mjs`（`planLaunch` 反代未就绪一律 fail、`waitForProxyHealth` 单次探测带 **attemptTimeoutMs 与定时器赛跑**（哑端口 fetch 永久挂起也能推进超时判定）、`proxyStartupFailureMessage` 处置建议、`exitCodeFor` 退出码归一 code 优先/signal→128+n/未知返回1 不静默），`dev-with-proxy.mjs` 改为**等待就绪→未就绪即打印处置建议并 exit(1)**，绝不以失效注入基址启动 next dev，子进程 error/exit（code 为 null 按 signal）均显式收口；R11-c① `resolveUpstream` 改 `indexOf` 一次性切分（query 含字面 `?` 不截断）、R11-c② 门禁顺序注明（见 T15）。红测试：`tests/dev-launcher.test.ts` 6 例（含「健康探测请求挂起仍按时超时返回 false」）、`tests/local-proxy.test.ts` 新增3例（头策略一致 / query `?` 不截断 / mock 上游 `content-encoding: gzip` 端到端头体原样）。实测复现：端口占用下启动器 exit=1 且打印处置建议、next dev 未启动；健康路径 `local proxy ready ✓` + page/api 200。R1–R10 语义零回退（本轮仅改 scripts/ 与 tests/）。
 
 
+- **第十轮返工留痕（2026-09-24 · R12，src 主线遗留面修复）**：
+  (R12-a · P1) `replay-events` store 的 `dispose()` 改为**可恢复**——仅作「丢弃在途结果」的代次标记（abort 全部在途、**不清 listeners**），`focusWindow` 进入时 `disposed = false` 复活；修复 StrictMode（app router 默认开启）首挂载 setup→cleanup(dispose)→setup 后快照永停 `loading=true、events=[]` 的整体失效。红测试：`recordings-replay-stage`「R12-a StrictMode 双挂载下 useReplayEvents 仍完成加载」（探针转正），非 StrictMode 对照用例保持全绿。
+  (R12-b · 需求完整性) 听直播补 MSE 降级：`defaultLivePlayerFactory` 创建前 `isSupported()` 探测，不可用以 `MSE_UNSUPPORTED_CODE` 上抛 → 注册表进入**不可重试**的 `unsupported` 态（`retry` 返回 false），状态卡片与悬浮组件同步渲染 `MSE_DEGRADE_TEXT`（设计 §2.5 文案）且不提供重试/停止入口；`LaneState` 契约同步至提案 §4.2。红测试：注册表 unsupported 用例 + 卡片/悬浮 UI 用例。
+  (R12-c · P2) 弹幕「关闭即清屏」判定移到 `prev === currentTime` 早退**之前**，暂停态切换开关不再短路清屏（冻结残影即刻消失）。红测试：暂停态关闭开关断言无在飞条目重绘。
+  (R12-d · P2) `readyPending` 归属修正：spawn 每代复位、`onError`/同步抛错/异步失败一律清除，杜绝「onReady→onError→settle」假「播放中」与 retry 残留未就绪即 playing。红测试两例。
+  (次-1) `play()` 拒绝收口：`startReplay` autoplay 路径 `.catch`→`onError`，`resumeReplay` 改 `async` 返回 boolean（拒绝→false），`togglePlay` 乐观置位失败复位。
+  (次-2) 七项视觉规格差异**逐条回写设计文档 §6 勘误 + Review 留痕**（圆点/按钮态/取阶口径/图标表达/空态图标/控件栏形态/色彩 token），`theme.ts` 注释与设计口径统一——按「不得静默偏离」要求以文档勘误收敛，行为零变更。
+  (次-3) 测试质量：删除 buffered-bar 恒真断言（改为逐段小于缓冲上限）、红阶段遗留注释中性化、移除对被测行为零影响的 `paused` defineProperty×2、`windowResponse` 主路径补**流式跨 chunk 截断**用例并把「绝不无限读入」用例改名为与主断言一致的「取消读取并降级直试」。
+  (次-4) 文档矛盾回写：PRD FR-5「全部事件」勘误为「已加载窗口（当前±相邻 10 分钟）+逐窗增量」、FR-5 与设计 §2.5 补注 seek 跳变阈值 `|Δt| > 2s`（与实现 `SEEK_JUMP_THRESHOLD_SECONDS = 2` 一致）。
+  门禁按 T15 顺序 `pnpm build → pnpm test → pnpm lint → npx tsc --noEmit`；每轮必查项（本地通路实测 + 生产源 CORS 白名单核查）同步执行。
+
+
 ### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。

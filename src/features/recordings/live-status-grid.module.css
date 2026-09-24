@@ -182,3 +182,11 @@
   border-color: var(--mantine-color-komichi-6);
   color: var(--mantine-color-komichi-6);
 }
+
+/* MSE 不可用降级文案（PRD §5 / 审核 R12-b） */
+.degrade {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-night287-3);
+  text-align: right;
+  line-height: 1.4;
+}

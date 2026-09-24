@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Page from "@/app/recordings/replay/page";
 import {
@@ -317,7 +318,7 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     fireEvent.timeUpdate(video);
     await flush();
 
-    // 已缓冲 600s / 总 10800s ≈ 5.56%（当前实现误用 currentTime/duration = 0.56%）
+    // 已缓冲 600s / 总 10800s ≈ 5.56%（与 played-bar 的已播放比例各自独立断言，不得混用）
     const bufferedBar = screen.getByTestId("buffered-bar");
     const segments = bufferedBar.querySelectorAll('[data-testid="buffered-segment"]');
     expect(segments).toHaveLength(1);
@@ -353,8 +354,10 @@ describe("代码审核返工：P1–P4 与次要项", () => {
     expect(parseFloat(segments[0].style.left ?? "0%")).toBeCloseTo(0, 1);
     expect(parseFloat(segments[1].style.width)).toBeCloseTo((10 / 60) * 100, 1);
     expect(parseFloat(segments[1].style.left ?? "0%")).toBeCloseTo((20 / 60) * 100, 1);
-    // 不得以 max(end)=30s 单段高估（30/60=50%）
-    expect(bar.style.width).toBe("");
+    // 不得以 max(end)=30s 单段高估：任何单段宽度都必须小于整段缓冲上限（30/60=50%）
+    for (const segment of segments) {
+      expect(parseFloat(segment.style.width)).toBeLessThan((30 / 60) * 100);
+    }
   });
 
   it("P3(a) 进度条拖动中仅预览，松开后才触发 seek", async () => {
@@ -848,9 +851,7 @@ describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属�
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
     await flush();
 
-    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
-    Object.defineProperty(video, "paused", { value: false, configurable: true }); // 弱网 seek 期间播放仍在进行
-
+    // 播放中发起 seek（实现不以 paused 为判据，故无需构造该属性，审核 次-3③）
     fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
     await flush();
 
@@ -926,6 +927,28 @@ describe("第四轮审核返工：R6（超时作废在途 seek / seeked 归属�
   });
 });
 
+describe("第十轮审核返工：R12（StrictMode / MSE 降级 / 弹幕清屏 / readyPending）", () => {
+  it("R12-a StrictMode 双挂载下 useReplayEvents 仍完成加载（disposed 可复活）", async () => {
+    const events = [makeEvent("e1", 10, "第一条")];
+    const deps = makeDeps({ fetchEvents: () => Promise.resolve({ total: 1, items: events }) });
+
+    render(
+      <StrictMode>
+        <ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />
+      </StrictMode>,
+    );
+
+    // 红：StrictMode 首挂载 setup→cleanup(dispose)→setup 后 store 终局，
+    // 快照永停 loading=true、events=[]，事件条目永不出现
+    await waitFor(
+      () => expect(screen.getByRole("button", { name: /第一条/ })).toBeInTheDocument(),
+      { timeout: 2000 },
+    );
+    expect(screen.queryByText(/正在加载弹幕事件/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("event-list").textContent).not.toContain("加载失败");
+  });
+});
+
 describe("第五轮审核返工：R7（真实落位归属为唯一收敛判据）", () => {
   it("R7-a 关键帧落位晚于超时到达：真实落位清除超时浮层（latch/看门狗已终局也一样）", async () => {
     vi.useFakeTimers();
@@ -998,8 +1021,7 @@ describe("第五轮审核返工：R7（真实落位归属为唯一收敛判据�
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
     await flush();
 
-    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
-    Object.defineProperty(video, "paused", { value: false, configurable: true }); // 播放中发起 seek（旧播放持续推进）
+    // 播放中发起 seek（实现不以 paused 为判据，审核 次-3③）
     fireEvent.click(screen.getByRole("button", { name: /目标事件/ }));
     await flush();
 
