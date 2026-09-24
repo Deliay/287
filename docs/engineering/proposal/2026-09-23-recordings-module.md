@@ -203,7 +203,7 @@ useReplayEvents(
 | AC-1（导航入口） | SiteHeader 单测：渲染「录播」链接指向 `/recordings` |
 | AC-2（状态列表/轮询） | mock recording-status：四卡片按绿黑白紫渲染、recording/not_live 徽标与标题正确；假定时器验证 30s 轮询与 hidden 暂停 |
 | AC-3（多路听直播） | registry 单测：4 路并存、单路停止/失败/重试互不影响、幂等、上限拒绝；悬浮组件订阅快照断言 |
-| AC-4（录播后加载） | IntersectionObserver mock：进入视口才发请求；排序按 `startedAt` 倒序；20 条分页切换 |
+| AC-4（录播后加载） | R14-1 口径：进入视口**不**发请求（挂载+模拟进视口后 fetch 为 0）；点击展开（含卡片定位展开）才发请求；排序按 `startedAt` 倒序；20 条分页切换 |
 | AC-5/AC-6（播放与 seek） | seek.ts 单测：缓冲内直接 currentTime；未缓冲 → 码率估算、Range 请求、关键帧对齐（构造 FLV tag 字节流用例）、非 206 放弃、看门狗超时；player 控件渲染断言 |
 | AC-7（弹幕对齐） | replay-windows 单测：锚点用 `startedAt`、多分段边界推导；replay-events 窗口加载/预取/去重；overlay 发射区间与 seek 重建逻辑（canvas 用 stub） |
 | AC-8（悬浮组件） | layout 渲染测试：有 lane 时组件出现、路由切换组件与注册表存活（单测层面断言注册表模块级单例不随组件树卸载销毁）、全部停止后消失 |

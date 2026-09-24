@@ -251,6 +251,16 @@
   门禁按 T15 顺序 `pnpm build → pnpm test → pnpm lint → npx tsc --noEmit`；每轮必查项（本地通路 6/6 实测 + 生产源 CORS 白名单核查）同步执行。
 
 
+- **第十二轮返工（2026-09-24 · R14，下游本地验收「样式问题」打回，需求/设计口径变更）**：本轮 5 项源自下游验收打回，PRD/设计/提案已由**审核节点直接修订**（同批提交，含 R14-1/R14-2 数据源冲突裁定），T6/T7/T13 既有任务描述以本节为准；每项先红后绿（实现留痕由实现节点续写）：
+  (R14-1 · P2) 历史录播列表默认收起且**点击前零请求**：`recordings-section.tsx` 删除视口自动加载（IntersectionObserver 触发取数路径），仅「点击分组头展开 / 点击状态卡片定位展开」触发 `fetchRoomRecordings`；失败重试、已缓存不重复取数、`loadedRoomId` 等 R4/次要6 语义保持。红测试：挂载+模拟进视口后 recordings 请求为 0、点击展开后才发出（现有「进视口即加载」用例按新口径**改写**，属行为变更非语义回退）。
+  (R14-2 · P2) 未开播卡片也展示上次直播标题：`live-status-grid.tsx` 去掉「仅 recording 才显示标题」条件，按 PRD FR-2 降级链展示（① `sessionTitle` 非空即展示 → ② 已缓存该成员录播最新一场 `info.title` 回填 → ③ 均无不展示标题行，**不为此新增任何请求**）。实测注：上游未开播返回 `sessionTitle: null`、`files: []`——若产品要求该场景必显且 ①② 均不可得，需上游补字段或允许标题级请求（与 R14-1 冲突，须人工决策）。红测试三例：not_live+`sessionTitle` 非空 → 展示；not_live+null+已缓存 → 展示 `info.title`；无缓存 → 不展示且零新增请求。
+  (R14-3 · P2) 「直播中」圆点改成员主题色（`--mantine-color-{colorKey}-6`）；设计 §6-1 勘误作废、恢复 §2.3 原口径。红测试：断言圆点样式取成员色。
+  (R14-4 · P3) 回放页「返回录播列表」入口独占一行（标题行上方）。红测试：断言 back link 与标题分属独立行容器。
+  (R14-5 · P2) 控件图标 SVG 化：播放控件（播放/暂停、静音、全屏）改内联 SVG，同批收敛全部图标按钮字形（悬浮组件 ✕/收起/展开、分组 ▸/▾、「听直播/停止收听」前缀符、返回 ←），不再使用 emoji/Unicode 几何字形；不引第三方 icon 库。红测试：断言控件按钮内为 `svg` 元素且无 emoji 文本节点。
+  【次要】tests 两处字面量 `"MSE_UNSUPPORTED"`（`recordings-live-status.test.tsx:229`、`recordings-audio-registry.test.ts:184`）改导入 `MSE_UNSUPPORTED_CODE`（审核节点记录的风格项，顺手处理）。
+  【不可回退】R1–R13 全部既有语义零变更（R13 unsupported 交互口径、R12-a/b/c/d、R11/R10 反代与启动器、R9 失败语义、R7/R6 seek 不变量、多路音频与悬浮组件语义等）；修复面限于上述各项对应文件与被新口径改写的测试。
+
+
 ### T14 全量验收 ✅
 
 - `pnpm test && pnpm lint && pnpm build` 全绿；确认静态导出产物包含 `recordings` 与 `recordings/replay` 路由。
