@@ -7,6 +7,14 @@ import type { RecordingStatusItem } from "@/features/recordings/types";
 import { theme } from "@/theme";
 import { GLYPH_RE, renderWithTheme } from "./utils";
 
+/** `?member=` 初始参数（测试内改写，afterEach 复位） */
+const { searchHolder } = vi.hoisted(() => ({ searchHolder: { current: "" } }));
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/recordings",
+  useSearchParams: () => new URLSearchParams(searchHolder.current),
+}));
+
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -61,6 +69,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   MockIntersectionObserver.reset();
+  // 复位本文件的状态外溢：初始参数、URL 与 scrollIntoView 桩
+  searchHolder.current = "";
+  delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  window.history.replaceState(null, "", "/recordings");
 });
 
 function makeFile(name: string, startedAt: string, options: Partial<{ endedAt: string; title: string; size: number }> = {}) {
@@ -232,6 +244,136 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
     expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
+  });
+
+  it("AC-5 手风琴：展开分组 B 后分组 A 自动收起，全页同时只有一个展开分组", async () => {
+    // 每次调用返回新 Response：Response body 只能消费一次，同一实例无法供两个分组并发读取；
+    // 且不带 info.title，避免污染模块级「最新场次标题」缓存（R14-2② 依赖该缓存为空）
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z")] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+
+    const headerOf = (id: string) =>
+      screen.getByTestId(`recordings-group-${id}`).querySelector("button") as HTMLElement;
+
+    fireEvent.click(headerOf("viridis"));
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-viridis-list")).toBeInTheDocument(),
+    );
+    expect(headerOf("viridis")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(headerOf("komichi"));
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-komichi-list")).toBeInTheDocument(),
+    );
+    expect(headerOf("komichi")).toHaveAttribute("aria-expanded", "true");
+    // 先展开的分组被父级单一状态收起，内容同步隐藏
+    expect(headerOf("viridis")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("recordings-viridis-list")).not.toBeInTheDocument();
+
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+  });
+
+  it("AC-6 展开/收起写删 ?member= query param，切换只保留最后展开的成员（replaceState 无刷新）", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z")] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const pushState = vi.spyOn(window.history, "pushState");
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    expect(window.location.search).toBe("");
+
+    const headerOf = (id: string) =>
+      screen.getByTestId(`recordings-group-${id}`).querySelector("button") as HTMLElement;
+
+    fireEvent.click(headerOf("viridis"));
+    await waitFor(() => expect(window.location.search).toBe("?member=viridis"));
+
+    fireEvent.click(headerOf("komichi"));
+    await waitFor(() => expect(window.location.search).toBe("?member=komichi"));
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+
+    fireEvent.click(headerOf("komichi"));
+    await waitFor(() => expect(window.location.search).toBe(""));
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(0);
+
+    // 全程 history 层面替换：不产生历史记录项、不触发刷新
+    expect(pushState).not.toHaveBeenCalled();
+  });
+
+  it("AC-7 携带有效 ?member= 打开：自动展开、恰好一次取数并滚动定位", async () => {
+    searchHolder.current = "member=viridis";
+    // 真实地址栏同步带参（useSearchParams 在测试中由 mock 供给，两者需一致）
+    window.history.replaceState(null, "", "/recordings?member=viridis");
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z")] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const scrollSpy = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      writable: true,
+      value: scrollSpy,
+    });
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("recordings-group-viridis").querySelector("button"),
+      ).toHaveAttribute("aria-expanded", "true"),
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/b/live/1001/recordings");
+    expect(await screen.findByTestId("recordings-viridis-list")).toBeInTheDocument();
+    expect(scrollSpy).toHaveBeenCalledTimes(1);
+    expect(scrollSpy).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    // 初始参数不被移除；其余分组保持收起
+    expect(window.location.search).toBe("?member=viridis");
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+  });
+
+  it("AC-7 携带无效 ?member= 打开：忽略参数、全部收起、零请求且不报错", () => {
+    searchHolder.current = "member=nobody";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("recordings-group-viridis")).toBeInTheDocument();
+  });
+
+  it("状态卡片定位（REVEAL_GROUP_EVENT）展开分组后 URL 同步写入（统一状态出口）", async () => {
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("recording-status")) {
+        return Promise.resolve(jsonResponse({ items: statusItems }));
+      }
+      return Promise.resolve(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z")] }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(
+      <>
+        <LiveStatusGrid />
+        <RecordingsSection items={statusItems} />
+      </>,
+    );
+    await waitFor(() => expect(screen.getByTestId("live-card-viridis")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("live-card-viridis"));
+    await waitFor(() => expect(window.location.search).toBe("?member=viridis"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("recordings-group-viridis").querySelector("button"),
+      ).toHaveAttribute("aria-expanded", "true"),
+    );
   });
 
   it("R4 加载完成后可收起：列表隐藏且 aria-expanded=false，再展开复用数据不重新取数", async () => {

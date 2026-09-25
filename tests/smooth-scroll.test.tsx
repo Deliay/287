@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
@@ -90,18 +90,46 @@ afterEach(() => {
 });
 
 describe("阻尼滚动 SmoothScroll", () => {
-  it("PC 断点命中时初始化 lenis（autoRaf）并注册实例，卸载时 destroy", () => {
+  it("PC 断点命中时初始化 lenis（autoRaf + 显式动画参数）并注册实例，卸载时 destroy（AC-4）", () => {
     mockMatchMedia(true);
 
     const { unmount } = renderWithTheme(<SmoothScroll />);
 
-    expect(LenisMock).toHaveBeenCalledWith({ autoRaf: true });
+    expect(LenisMock).toHaveBeenCalledTimes(1);
+    const lenisOptions = LenisMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(lenisOptions).toMatchObject({ autoRaf: true });
+    // 显式动画参数：滚动/吸附必须走时长插值，不得依赖库默认的瞬时/lerp 行为
+    expect(typeof lenisOptions.duration).toBe("number");
+    expect(lenisOptions.duration as number).toBeGreaterThan(0);
+    expect(typeof lenisOptions.easing).toBe("function");
+    // PRD FR-2「无视减少动效规定，呈现完整动效」：不接受 lenis 的 reduced-motion 降级
+    expect(lenisOptions.respectReducedMotion).toBe(false);
+
     const instance = LenisMock.mock.results[0].value;
     expect(getLenis()).toBe(instance);
 
     unmount();
     expect(instance.destroy).toHaveBeenCalled();
     expect(getLenis()).toBeNull();
+  });
+
+  it("proximity 吸附显式配置 duration 与 easing，归位为动画过程而非瞬时跳变（AC-4）", () => {
+    mockMatchMedia(true);
+    renderWithTheme(<SmoothScroll />);
+
+    expect(SnapMock).toHaveBeenCalledTimes(1);
+    const [, snapOptions] = SnapMock.mock.calls[0] as unknown as [
+      unknown,
+      Record<string, unknown>,
+    ];
+    expect(snapOptions.type).toBe("proximity");
+    expect(typeof snapOptions.duration).toBe("number");
+    expect(snapOptions.duration as number).toBeGreaterThan(0);
+    expect(typeof snapOptions.easing).toBe("function");
+    // 参数可用：easing 是合法的 [0,1] → [0,1] 单调映射
+    const easing = snapOptions.easing as (t: number) => number;
+    expect(easing(0)).toBeCloseTo(0, 5);
+    expect(easing(1)).toBeCloseTo(1, 5);
   });
 
   it("移动端断点不命中时不初始化 lenis、不注册吸附点（保留原生滚动）", () => {
@@ -213,3 +241,24 @@ describe("逐屏吸附（CSS 降级路径，AC-7 结构断言）", () => {
     );
   });
 });
+
+describe("完整动效保障（PRD FR-2 / AC-4）", () => {
+  it("src/ 全量源码不存在 prefers-reduced-motion 降级规则（防止后续引入）", () => {
+    const files = listSourceFiles(path.join(process.cwd(), "src"));
+    expect(files.length).toBeGreaterThan(0);
+
+    const offenders = files.filter((file) =>
+      /prefers-reduced-motion/.test(readFileSync(file, "utf8")),
+    );
+    expect(offenders).toEqual([]);
+  });
+});
+
+/** 递归收集目录下全部 .ts/.tsx/.css 源码文件路径 */
+function listSourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listSourceFiles(full);
+    return /\.(?:ts|tsx|css)$/.test(entry.name) ? [full] : [];
+  });
+}

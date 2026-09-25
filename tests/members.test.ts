@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { members, type Member } from "@/data/members";
+import { liveRoomUrl, members, type Member } from "@/data/members";
 
 describe("成员数据层 members", () => {
   it("共 4 位成员，顺序严格为绿黑白紫（viridis → komichi → chu2u → sumire）", () => {
@@ -26,6 +26,25 @@ describe("成员数据层 members", () => {
         expect(member.roomId).toBeGreaterThan(0);
       }
     }
+  });
+
+  it("liveRoomUrl 纯函数按 roomId 集中拼装直播间地址（技术方案 §4）", () => {
+    expect(liveRoomUrl(1727071052)).toBe("https://live.bilibili.com/1727071052");
+    expect(liveRoomUrl(1)).toBe("https://live.bilibili.com/1");
+  });
+
+  it("四位成员均已填写 roomId，数值与技术方案 §4 实测对照表逐项一致（防数据回退）", () => {
+    expect(members.map((m) => m.roomId)).toEqual([
+      1727071052, 1700301235, 1727074031, 1727076670,
+    ]);
+    for (const member of members) {
+      expect(Number.isInteger(member.roomId)).toBe(true);
+      expect(member.roomId as number).toBeGreaterThan(0);
+    }
+  });
+
+  it("四位成员均不填写 liveUrl（直播入口已由 roomId 推导，字段仅作逐成员覆盖逃生口）", () => {
+    for (const member of members) expect(member.liveUrl).toBeUndefined();
   });
 
   it("每位成员的 B 站主页为需求文档 §7 确认的 UID 直链", () => {

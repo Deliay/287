@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { Member } from "@/data/members";
 import { LiveBadge } from "@/components/live-badge";
+import { RecordingEntry } from "@/components/recording-entry";
 import styles from "./member-section.module.css";
 
 export interface MemberSectionProps {
@@ -36,7 +37,12 @@ export function MemberSection({ member, index }: MemberSectionProps) {
         </h2>
         <p className={styles.subtitle}>{member.title}</p>
         <p className={styles.description}>{member.description}</p>
-        <LiveBadge member={member} />
+        {/* FR-4 返工 R1：录播入口**替换** LiveBadge 的未开播文本（同一位置二选一），
+            徽章为详情区直播状态的单一状态出口；HeroWall 不传 offlineNode，行为不变 */}
+        <LiveBadge
+          member={member}
+          offlineNode={<RecordingEntry member={member} />}
+        />
         <a
           className={styles.cta}
           href={member.bilibili}
