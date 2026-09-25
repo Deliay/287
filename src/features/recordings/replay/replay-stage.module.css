@@ -170,15 +170,27 @@
   cursor: pointer;
 }
 
+/* 控件浮层（FR-1 · 设计 §2.1）：覆盖画面底部的悬浮层，不占独立布局空间 */
 .controls,
 .controlsHidden {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--mantine-spacing-xs);
   padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
-  background: var(--mantine-color-night287-8);
-  border: 1px solid var(--mantine-color-night287-7);
-  border-radius: 10px;
+  /* 渐变遮罩保证亮色画面上按钮可辨（设计 §1） */
+  background: linear-gradient(transparent, rgba(0, 0, 0, .7));
+}
+
+/* 进度条贴浮层顶缘、独占上缘一行，其余控件一行折行收纳 */
+.controls .progressWrap {
+  order: -1;
+  flex: 1 0 100%;
+  padding-top: 6px;
 }
 
 .controlsHidden {

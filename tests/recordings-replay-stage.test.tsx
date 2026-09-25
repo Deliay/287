@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Page from "@/app/recordings/replay/page";
@@ -130,6 +132,145 @@ afterEach(() => {
 });
 
 /** 冲刷微任务（避免依赖 waitFor 的时钟推进） */
+describe("FR-3 进度条 hover 时间预览（T6 / AC-3 · 设计 §2.2）", () => {
+  /** jsdom 无布局：为元素注入几何尺寸，供「位置 → 时间」换算。 */
+  function stubRect(element: HTMLElement, rect: Partial<DOMRect>) {
+    const base: DOMRect = {
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 20,
+      top: 0,
+      right: 400,
+      bottom: 20,
+      left: 0,
+      toJSON: () => ({}),
+    };
+    element.getBoundingClientRect = () => ({ ...base, ...rect } as DOMRect);
+  }
+
+  async function renderWithDuration(durationSeconds = 10_800) {
+    const performSeek = vi.fn(() => Promise.resolve(true));
+    const deps = makeDeps({ performSeek });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { value: durationSeconds, configurable: true });
+    fireEvent.timeUpdate(video);
+    await flush();
+
+    const progress = screen.getByRole("slider", { name: "播放进度" });
+    const wrap = progress.parentElement as HTMLElement;
+    stubRect(wrap, { left: 0, width: 400 });
+    return { performSeek, progress, wrap };
+  }
+
+  it("鼠标 pointermove 显示跟随指针的时间预览，数值随位置实时更新", async () => {
+    const { wrap } = await renderWithDuration();
+
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 200 }); // 半程
+    const preview = screen.getByTestId("progress-preview");
+    expect(preview).toHaveTextContent("1:30:00"); // formatOffset(10800 / 2)
+    expect(preview.closest("button, input, [role=slider]")).toBeNull(); // 悬浮预览，非控件本体
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 100 }); // 1/4 处 → 实时更新
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("45:00");
+  });
+
+  it("pointerleave 立即隐藏；touch 指针不显示预览（不影响现有拖动预览）", async () => {
+    const { progress, wrap } = await renderWithDuration();
+
+    fireEvent.pointerMove(wrap, { pointerType: "touch", clientX: 100 });
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 100 });
+    expect(screen.getByTestId("progress-preview")).toBeInTheDocument();
+    fireEvent.pointerLeave(wrap);
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+
+    // touch 拖动预览（draft）不受影响：仍由 range 值展示
+    fireEvent.change(progress, { target: { value: "60" } });
+    expect((progress as HTMLInputElement).value).toBe("60");
+  });
+
+  it("拖动中优先显示 draft 值（与 hover 互斥），松开才提交 seek（P3(a) 不回归）", async () => {
+    const { performSeek, progress, wrap } = await renderWithDuration();
+
+    fireEvent.change(progress, { target: { value: "300" } });
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("05:00");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 396 }); // hover 接近片尾
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("05:00"); // draft 优先
+
+    expect(performSeek).not.toHaveBeenCalled();
+    fireEvent.pointerUp(progress);
+    await flush();
+    expect(performSeek).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FR-1 控件浮层化（T5 / AC-1 · 设计 §2.1）", () => {
+  it("控件渲染在画面容器 videoArea 内部（DOM 父子），不再作为其兄弟占画面下方独立空间", async () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const group = screen.getByRole("group", { name: "播放控件" });
+    const videoArea = screen.getByTestId("video-area");
+    expect(group.parentElement).toBe(videoArea);
+    // 画面容器内还承载视频本体（浮层覆盖的是同一盒模型，非并列布局条）
+    expect(videoArea).toContainElement(screen.getByLabelText("录播视频"));
+  });
+
+  it("暂停时控件常显：静止 3s 隐藏后暂停立即可见，恢复播放不立即隐藏", async () => {
+    vi.useFakeTimers();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const group = screen.getByRole("group", { name: "播放控件" });
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(group).toHaveAttribute("data-controls", "hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "暂停" }));
+    expect(group).toHaveAttribute("data-controls", "visible");
+
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    expect(group).toHaveAttribute("data-controls", "visible"); // 恢复播放不得沿用暂停前的 idle 态
+  });
+
+  it("浮层 CSS：绝对定位覆盖画面底部 + 渐变遮罩 + 进度条独占浮层顶缘一行", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/features/recordings/replay/replay-stage.module.css"),
+      "utf8",
+    );
+    const controlsBody = ruleBody(css, "controls");
+    expect(controlsBody).toMatch(/position:\s*absolute/);
+    expect(controlsBody).toMatch(/inset-inline:\s*0/);
+    expect(controlsBody).toMatch(/bottom:\s*0/);
+    // 渐变遮罩保证亮色画面上按钮可辨（FR-1 / 设计 §1）
+    expect(controlsBody).toMatch(/linear-gradient\(\s*transparent,\s*rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*\.?7\s*\)\s*\)/);
+    expect(controlsBody).not.toMatch(/border:\s*1px solid/); // 不再是独立布局条的描边卡片
+    // 进度条贴浮层顶缘、独占一行（其余控件折行收纳）
+    const progressBody = ruleBody(css, "controls .progressWrap");
+    expect(progressBody).toMatch(/flex:\s*1\s+0\s+100%/);
+  });
+
+  it("浮层形态下控件功能不回归：播放/进度/音量/倍速/弹幕开关/全屏齐备", async () => {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument());
+    const group = screen.getByRole("group", { name: "播放控件" });
+    expect(group).toContainElement(within(group).getByRole("slider", { name: "播放进度" }));
+    expect(group).toContainElement(within(group).getByRole("slider", { name: "音量" }));
+    expect(group).toContainElement(within(group).getByRole("combobox", { name: "倍速" }));
+    expect(group).toContainElement(within(group).getByRole("button", { name: "全屏" }));
+    expect(group).toContainElement(within(group).getByRole("button", { name: /弹幕开关/ }));
+  });
+});
+
 describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
   /** mock Fullscreen API：jsdom 无实现，逐用例注入并在 afterEach 还原。 */
   function stubFullscreenApi(): FullscreenApiMock {
@@ -238,6 +379,11 @@ async function flush(): Promise<void> {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+/** 从 CSS 源码取出某条规则的声明体（结构断言共用，同 live-badge 用例口径） */
+function ruleBody(css: string, selector: string): string {
+  return css.match(new RegExp(`\\.${selector}\\b[^{}]*\\{([^{}]*)\\}`))?.[1] ?? "";
 }
 
 describe("回放页路由与页头（T13 / AC-5、AC-9 路由）", () => {

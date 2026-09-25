@@ -612,6 +612,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     if (playing) {
       pauseReplay();
       setPlaying(false);
+      // 暂停即取消 idle：暂停态控件常显，恢复播放不得沿用暂停前的隐藏倒计时（FR-1 · 设计 §2.1）
+      setControlsIdle(false);
     } else {
       // 乐观置位；play() 被拒绝（自动播放策略等）时复位，避免假「暂停」按钮态（审核 次-1）
       setPlaying(true);
@@ -645,6 +647,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   };
 
   const seekFailed = seekError !== null;
+  /** 控件浮层显隐（FR-1）：仅「播放中 + 静止超时」隐藏；暂停时恒常显（设计 §2.1）。 */
+  const controlsHidden = playing && controlsIdle;
 
   return (
     <div className={styles.stage} data-testid="replay-stage">
@@ -676,7 +680,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               当前浏览器无法播放，请使用最新版 Chrome / Edge / Safari
             </div>
           ) : (
-            <div className={styles.videoArea}>
+            <div className={styles.videoArea} data-testid="video-area">
               <video
                 ref={videoRef}
                 aria-label="录播视频"
@@ -688,7 +692,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 onProgress={(event) => handleMediaEvent(event.currentTarget)}
                 onSeeked={handleSeeked}
                 onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
+                onPause={() => {
+                  setPlaying(false);
+                  setControlsIdle(false); // 任意暂停路径都回到「暂停常显」（FR-1）
+                }}
               />
               {Number.isFinite(recordStartMs) && (
                 <DanmakuOverlay
@@ -721,6 +728,164 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                   播放失败，请稍后重试。
                 </div>
               )}
+
+              {supported !== false && (
+                <div
+                  className={controlsHidden ? styles.controlsHidden : styles.controls}
+                  data-controls={controlsHidden ? "hidden" : "visible"}
+                  onMouseMove={revealControls}
+                  role="group"
+                  aria-label="播放控件"
+                >
+                  <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlay}>
+                    {playing ? <IconPause /> : <IconPlay />}
+                  </button>
+
+                  <div className={styles.progressWrap}>
+                    {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
+                    <div className={styles.progressTrack} aria-hidden="true">
+                      <div data-testid="buffered-bar" className={styles.bufferedBar}>
+                        {bufferedRanges.map(([start, end]) => (
+                          <div
+                            key={`${start}-${end}`}
+                            data-testid="buffered-segment"
+                            className={styles.buffered}
+                            style={{
+                              left: duration > 0 ? `${Math.min(100, (start / duration) * 100)}%` : "0%",
+                              width:
+                                duration > 0
+                                  ? `${Math.min(100, (Math.max(0, end - start) / duration) * 100)}%`
+                                  : "0%",
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div
+                        className={styles.played}
+                        data-testid="played-bar"
+                        style={{
+                          width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
+                          backgroundColor: member
+                            ? `var(--mantine-color-${member.colorKey}-6)`
+                            : "var(--mantine-color-night287-4)",
+                        }}
+                      />
+                    </div>
+                    <input
+                      type="range"
+                      aria-label="播放进度"
+                      min={0}
+                      max={duration > 0 ? duration : 0}
+                      step={0.1}
+                      value={Math.min(
+                        draftTime ?? currentTime,
+                        duration > 0 ? duration : currentTime,
+                      )}
+                      disabled={seeking || duration <= 0}
+                      style={{
+                        accentColor: member
+                          ? `var(--mantine-color-${member.colorKey}-6)`
+                          : "var(--mantine-color-night287-4)",
+                      }}
+                      // 拖动中仅更新预览；松开（pointer/mouse/touch）或键盘抬起才提交 seek（审核 P3-a）
+                      onChange={(event) => {
+                        const next = Number(event.target.value);
+                        draftRef.current = next;
+                        setDraftTime(next);
+                      }}
+                      onPointerUp={commitDraft}
+                      onMouseUp={commitDraft}
+                      onTouchEnd={commitDraft}
+                      onKeyUp={(event) => {
+                        if (
+                          [
+                            "ArrowLeft",
+                            "ArrowRight",
+                            "ArrowUp",
+                            "ArrowDown",
+                            "Home",
+                            "End",
+                            "PageUp",
+                            "PageDown",
+                          ].includes(event.key)
+                        ) {
+                          commitDraft();
+                        }
+                      }}
+                    />
+                  </div>
+                  <span className={styles.time} aria-label="播放时间">
+                    {formatOffset(currentTime)} / {formatOffset(duration)}
+                  </span>
+
+                  <label className={styles.volume}>
+                    <span aria-hidden="true">
+                      <IconVolume />
+                    </span>
+                    <input
+                      type="range"
+                      aria-label="音量"
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      value={volume}
+                      onChange={(event) => {
+                        const next = Number(event.target.value);
+                        setVolume(next);
+                        if (next > 0) setMuted(false);
+                        if (videoRef.current) videoRef.current.volume = next;
+                      }}
+                    />
+                  </label>
+                  {/* 移动端仅静音切换（设计 §2.5，次要7）：CSS 控制滑杆/按钮的显隐 */}
+                  <button
+                    type="button"
+                    className={styles.muteButton}
+                    aria-label={muted ? "取消静音" : "静音"}
+                    onClick={() => {
+                      if (muted) {
+                        const restored = volumeBeforeMuteRef.current;
+                        setVolume(restored);
+                        setMuted(false);
+                        if (videoRef.current) videoRef.current.volume = restored;
+                      } else {
+                        volumeBeforeMuteRef.current = volume;
+                        setVolume(0);
+                        setMuted(true);
+                        if (videoRef.current) videoRef.current.volume = 0;
+                      }
+                    }}
+                  >
+                    {muted ? <IconVolumeMute /> : <IconVolume />}
+                  </button>
+
+                  <select aria-label="倍速" value={rate} onChange={handleRateChange}>
+                    {PLAYBACK_RATES.map((value) => (
+                      <option key={value} value={value}>
+                        {value}×
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    type="button"
+                    aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                    aria-pressed={isFullscreen}
+                    onClick={handleFullscreen}
+                  >
+                    {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
+                  </button>
+
+                  <button
+                    type="button"
+                    aria-label="弹幕开关"
+                    aria-pressed={danmakuEnabled}
+                    onClick={() => setDanmakuEnabled((value) => !value)}
+                  >
+                    弹幕{danmakuEnabled ? "开" : "关"}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -733,163 +898,6 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
             </div>
           )}
 
-          {supported !== false && (
-            <div
-              className={playing && controlsIdle ? styles.controlsHidden : styles.controls}
-              data-controls={playing && controlsIdle ? "hidden" : "visible"}
-              onMouseMove={revealControls}
-              role="group"
-              aria-label="播放控件"
-            >
-              <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlay}>
-                {playing ? <IconPause /> : <IconPlay />}
-              </button>
-
-              <div className={styles.progressWrap}>
-                {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
-                <div className={styles.progressTrack} aria-hidden="true">
-                  <div data-testid="buffered-bar" className={styles.bufferedBar}>
-                    {bufferedRanges.map(([start, end]) => (
-                      <div
-                        key={`${start}-${end}`}
-                        data-testid="buffered-segment"
-                        className={styles.buffered}
-                        style={{
-                          left: duration > 0 ? `${Math.min(100, (start / duration) * 100)}%` : "0%",
-                          width:
-                            duration > 0
-                              ? `${Math.min(100, (Math.max(0, end - start) / duration) * 100)}%`
-                              : "0%",
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div
-                    className={styles.played}
-                    data-testid="played-bar"
-                    style={{
-                      width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
-                      backgroundColor: member
-                        ? `var(--mantine-color-${member.colorKey}-6)`
-                        : "var(--mantine-color-night287-4)",
-                    }}
-                  />
-                </div>
-                <input
-                  type="range"
-                  aria-label="播放进度"
-                  min={0}
-                  max={duration > 0 ? duration : 0}
-                  step={0.1}
-                  value={Math.min(
-                    draftTime ?? currentTime,
-                    duration > 0 ? duration : currentTime,
-                  )}
-                  disabled={seeking || duration <= 0}
-                  style={{
-                    accentColor: member
-                      ? `var(--mantine-color-${member.colorKey}-6)`
-                      : "var(--mantine-color-night287-4)",
-                  }}
-                  // 拖动中仅更新预览；松开（pointer/mouse/touch）或键盘抬起才提交 seek（审核 P3-a）
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    draftRef.current = next;
-                    setDraftTime(next);
-                  }}
-                  onPointerUp={commitDraft}
-                  onMouseUp={commitDraft}
-                  onTouchEnd={commitDraft}
-                  onKeyUp={(event) => {
-                    if (
-                      [
-                        "ArrowLeft",
-                        "ArrowRight",
-                        "ArrowUp",
-                        "ArrowDown",
-                        "Home",
-                        "End",
-                        "PageUp",
-                        "PageDown",
-                      ].includes(event.key)
-                    ) {
-                      commitDraft();
-                    }
-                  }}
-                />
-              </div>
-              <span className={styles.time} aria-label="播放时间">
-                {formatOffset(currentTime)} / {formatOffset(duration)}
-              </span>
-
-              <label className={styles.volume}>
-                <span aria-hidden="true">
-                  <IconVolume />
-                </span>
-                <input
-                  type="range"
-                  aria-label="音量"
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  value={volume}
-                  onChange={(event) => {
-                    const next = Number(event.target.value);
-                    setVolume(next);
-                    if (next > 0) setMuted(false);
-                    if (videoRef.current) videoRef.current.volume = next;
-                  }}
-                />
-              </label>
-              {/* 移动端仅静音切换（设计 §2.5，次要7）：CSS 控制滑杆/按钮的显隐 */}
-              <button
-                type="button"
-                className={styles.muteButton}
-                aria-label={muted ? "取消静音" : "静音"}
-                onClick={() => {
-                  if (muted) {
-                    const restored = volumeBeforeMuteRef.current;
-                    setVolume(restored);
-                    setMuted(false);
-                    if (videoRef.current) videoRef.current.volume = restored;
-                  } else {
-                    volumeBeforeMuteRef.current = volume;
-                    setVolume(0);
-                    setMuted(true);
-                    if (videoRef.current) videoRef.current.volume = 0;
-                  }
-                }}
-              >
-                {muted ? <IconVolumeMute /> : <IconVolume />}
-              </button>
-
-              <select aria-label="倍速" value={rate} onChange={handleRateChange}>
-                {PLAYBACK_RATES.map((value) => (
-                  <option key={value} value={value}>
-                    {value}×
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                aria-label={isFullscreen ? "退出全屏" : "全屏"}
-                aria-pressed={isFullscreen}
-                onClick={handleFullscreen}
-              >
-                {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
-              </button>
-
-              <button
-                type="button"
-                aria-label="弹幕开关"
-                aria-pressed={danmakuEnabled}
-                onClick={() => setDanmakuEnabled((value) => !value)}
-              >
-                弹幕{danmakuEnabled ? "开" : "关"}
-              </button>
-            </div>
-          )}
         </div>
 
         <section className={styles.timeline} aria-label="事件列表">
