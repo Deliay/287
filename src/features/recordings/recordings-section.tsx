@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { IconChevron } from "@/components/icons";
 import { members, type Member } from "@/data/members";
@@ -10,6 +11,15 @@ import type { RecordingFile, RecordingStatusItem } from "./types";
 import { formatDateTime, formatDuration, formatFileSize } from "./format";
 import { REVEAL_GROUP_EVENT, readRevealMemberId } from "./reveal-group";
 import styles from "./recordings-section.module.css";
+
+/**
+ * `?member=` 值 → 合法成员 id；无效值（缺失/未知成员）返回 null，
+ * 调用方按「全部收起」渲染且不报错（AC-7）。
+ */
+function toMemberId(value: string | null): Member["id"] | null {
+  if (!value) return null;
+  return members.find((member) => member.id === value)?.id ?? null;
+}
 
 /** 每页条数（FR-4：20）。 */
 export const PAGE_SIZE = 20;
@@ -53,9 +63,14 @@ interface MemberGroupProps {
   expanded: boolean;
   /**
    * 请求父级置位/收起展开态——分组头点击、触发加载、状态卡片定位共用的
-   * 单一状态出口（AC-5；T4 起该出口同时负责 URL 同步）。
+   * 单一状态出口（AC-5；该出口同时负责 URL 同步，AC-6）。
    */
-  onSetExpanded: (memberId: string, expanded: boolean) => void;
+  onSetExpanded: (memberId: Member["id"], expanded: boolean) => void;
+  /**
+   * 父级统一监听 `REVEAL_GROUP_EVENT` 后为该成员递增的序号：
+   * 分组据此触发「失败态再次定位即重试」，无需各自监听事件（审核次要6）。
+   */
+  revealSeq?: number;
 }
 
 /** 单成员录播分组：折叠态不请求；仅点击分组头或状态卡片定位时触发加载（AC-4 · R14-1 点击前零请求）。 */
@@ -65,6 +80,7 @@ function MemberGroup({
   statusKind = "ok",
   expanded,
   onSetExpanded,
+  revealSeq = 0,
 }: MemberGroupProps) {
   const [state, setState] = useState<GroupState>({ kind: "idle" });
   const [page, setPage] = useState(1);
@@ -128,22 +144,30 @@ function MemberGroup({
     void load({ expand: false });
   }, [statusKind, state.kind, load]);
 
-  // 状态卡片点击定位（设计 §2.3）：经父级统一出口展开并加载对应分组；失败态再次定位即重试（审核次要6）
+  /** 已消费的 reveal 序号：用于识别「是否由本次定位事件触发」 */
+  const handledRevealRef = useRef(0);
+
+  // 展开态由父级置位后补触发首取（分组头点击 / ?member= 带参直达共用，AC-6 · AC-7）：
+  // 折叠或已有数据/在途时不取数（R14-1 点击前零请求 · R4 复用数据不重复取数）
   useEffect(() => {
-    const onReveal = (event: Event) => {
-      if (readRevealMemberId(event) !== member.id) return;
-      onSetExpanded(member.id, true);
-      if (state.kind === "idle" || state.kind === "error") void load({ expand: false });
-    };
-    window.addEventListener(REVEAL_GROUP_EVENT, onReveal);
-    return () => window.removeEventListener(REVEAL_GROUP_EVENT, onReveal);
-  }, [member.id, state.kind, load, onSetExpanded]);
+    if (!expanded || state.kind !== "idle") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 首取由「展开态」驱动（分组头点击 / ?member= 带参直达共用），与既有「状态就绪补跑」同一取数通道
+    void load({ expand: false });
+  }, [expanded, state.kind, load]);
+
+  // 状态卡片定位到「已失败」的分组即重试（审核次要6）：事件已由父级统一监听，
+  // 此处只按序号认领本次事件，避免把 state.kind 直接做成依赖导致「失败 → 重试 → 再失败」自循环
+  useEffect(() => {
+    if (revealSeq === handledRevealRef.current) return;
+    handledRevealRef.current = revealSeq;
+    if (state.kind !== "error") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 由外部定位事件驱动的失败重试，与「状态就绪补跑」同一取数通道
+    void load({ expand: false });
+  }, [revealSeq, state.kind, load]);
 
   const toggle = () => {
-    const next = !expanded;
-    onSetExpanded(member.id, next);
-    // 首次展开触发取数；其余状态分别由「状态就绪补跑」effect 与「重试」按钮接管
-    if (next && state.kind === "idle") void load({ expand: false });
+    // 取数由上面的「展开态补触发首取」effect 接管，展开与加载职责分离
+    onSetExpanded(member.id, !expanded);
   };
 
   const files = state.kind === "ok" ? state.files : [];
@@ -288,16 +312,66 @@ interface RecordingsSectionProps {
  * 分组头点击 / 触发加载 / 状态卡片定位三条路径共用同一状态出口。
  */
 export function RecordingsSection({ items, statusKind = "ok" }: RecordingsSectionProps) {
-  /** 当前展开的成员 id；null 为全部收起（AC-5 单展开） */
-  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  /** 当前展开的成员 id；null 为全部收起（AC-5 单展开）。初始化只读一次 `?member=`（AC-7） */
+  const [expandedMemberId, setExpandedMemberId] = useState<Member["id"] | null>(() =>
+    toMemberId(searchParams.get("member")),
+  );
+  /** `REVEAL_GROUP_EVENT` 触发序号（按成员）：通知对应分组取数/失败重试 */
+  const [revealSeq, setRevealSeq] = useState<Record<string, number>>({});
 
   /** 统一状态出口：置位/收起展开态（收起仅当目标就是当前展开项，避免误伤） */
-  const handleSetExpanded = useCallback((memberId: string, expanded: boolean) => {
+  const handleSetExpanded = useCallback((memberId: Member["id"], expanded: boolean) => {
     setExpandedMemberId((current) => {
       if (expanded) return memberId;
       return current === memberId ? null : current;
     });
   }, []);
+
+  // 带参直达（AC-7）：挂载时把目标分组滚入视口（能力判断同 live-status-grid 的 reveal 定位）
+  const initialScrollRef = useRef(false);
+  useEffect(() => {
+    if (initialScrollRef.current) return;
+    initialScrollRef.current = true;
+    if (!expandedMemberId) return;
+    const el = document.getElementById(`recordings-group-${expandedMemberId}`);
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [expandedMemberId]);
+
+  // 展开态 → URL（AC-6）：`history.replaceState` 写删 `?member=`，
+  // 全程无刷新、不产生历史记录项；挂载时只读不写（保留带参直达的原始 URL）
+  const prevExpandedRef = useRef<Member["id"] | null | undefined>(undefined);
+  useEffect(() => {
+    const previous = prevExpandedRef.current;
+    prevExpandedRef.current = expandedMemberId;
+    if (previous === undefined || previous === expandedMemberId) return;
+    const url = new URL(window.location.href);
+    if (expandedMemberId) url.searchParams.set("member", expandedMemberId);
+    else url.searchParams.delete("member");
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (next !== current) {
+      window.history.replaceState(window.history.state, "", next);
+    }
+  }, [expandedMemberId]);
+
+  // 状态卡片定位（设计 §2.3）：监听上移至父级——展开态与 URL 同步走同一出口，
+  // 分组头点击 / 卡片定位 / ?member= 带参直达三条路径共用同一状态出口
+  useEffect(() => {
+    const onReveal = (event: Event) => {
+      const memberId = toMemberId(readRevealMemberId(event));
+      if (!memberId) return;
+      handleSetExpanded(memberId, true);
+      setRevealSeq((current) => ({
+        ...current,
+        [memberId]: (current[memberId] ?? 0) + 1,
+      }));
+    };
+    window.addEventListener(REVEAL_GROUP_EVENT, onReveal);
+    return () => window.removeEventListener(REVEAL_GROUP_EVENT, onReveal);
+  }, [handleSetExpanded]);
 
   return (
     <section aria-labelledby="recordings-section-heading" className={styles.section}>
@@ -315,6 +389,7 @@ export function RecordingsSection({ items, statusKind = "ok" }: RecordingsSectio
               statusKind={statusKind}
               expanded={expandedMemberId === member.id}
               onSetExpanded={handleSetExpanded}
+              revealSeq={revealSeq[member.id] ?? 0}
             />
           );
         })}
