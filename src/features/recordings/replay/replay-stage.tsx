@@ -18,6 +18,7 @@ import {
   IconFullscreenExit,
   IconPause,
   IconPlay,
+  IconTheater,
   IconVolume,
   IconVolumeMute,
 } from "@/components/icons";
@@ -191,6 +192,12 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [isFullscreen, setIsFullscreen] = useState(
     () => typeof document !== "undefined" && Boolean(document.fullscreenElement),
   );
+  /** 网页全屏 theater（FR-5 · 设计 §2.3）：舞台 fixed 满窗，左画面居中 / 右事件列表。 */
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  /** theater 的同步快照：供 `fullscreenchange` 回调读取（effect 闭包不依赖 state 依赖数组）。 */
+  const theaterRef = useRef(false);
+  /** 进入浏览器全屏前的 theater 记忆：退出全屏后按此恢复（互斥口径，设计 §2.3）。 */
+  const resumeTheaterRef = useRef(false);
 
   const startReplay = deps.startReplay ?? defaultStartReplay;
   const destroyReplay = deps.destroyReplay ?? defaultDestroyReplay;
@@ -332,12 +339,31 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     return () => window.clearTimeout(timer);
   }, [playing, controlsActivity]);
 
-  // 全屏状态同步（FR-4）：挂载注册、卸载移除；Esc 原生退出后按钮态回正
+  /** 写入 theater 态（state + ref 快照同步），供按钮与全屏互斥逻辑共用。 */
+  const applyTheater = useCallback((next: boolean) => {
+    theaterRef.current = next;
+    setIsTheaterMode(next);
+  }, []);
+
+  // 全屏状态同步 + 与网页全屏互斥（FR-4 / FR-5）：挂载注册、卸载移除；
+  // Esc 原生退出后按钮态回正，并按进入全屏前的记忆恢复 theater。
   useEffect(() => {
-    const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    const handleFullscreenChange = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (active) {
+        // 进入浏览器全屏 → 暂退 theater 并记住进入前的状态
+        resumeTheaterRef.current = theaterRef.current;
+        if (theaterRef.current) applyTheater(false);
+      } else if (resumeTheaterRef.current) {
+        // 退出浏览器全屏 → 恢复进入前状态
+        resumeTheaterRef.current = false;
+        applyTheater(true);
+      }
+    };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
+  }, [applyTheater]);
 
   /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
@@ -691,7 +717,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         </div>
       </header>
 
-      <div className={styles.layout}>
+      <div
+        className={isTheaterMode ? `${styles.layout} ${styles.theater}` : styles.layout}
+        data-theater={isTheaterMode ? "true" : "false"}
+      >
         <div
           className={styles.videoColumn}
           ref={containerRef}
@@ -904,6 +933,16 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                       </option>
                     ))}
                   </select>
+
+                  <button
+                    type="button"
+                    className={styles.theaterButton}
+                    aria-label="网页全屏"
+                    aria-pressed={isTheaterMode}
+                    onClick={() => applyTheater(!isTheaterMode)}
+                  >
+                    <IconTheater />
+                  </button>
 
                   <button
                     type="button"

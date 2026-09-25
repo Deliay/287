@@ -331,6 +331,11 @@
     align-items: center;
     justify-content: center;
   }
+
+  /* 移动端不提供网页全屏入口（FR-5 · 设计 §2.3，与音量滑杆同口径） */
+  .theaterButton {
+    display: none;
+  }
 }
 
 /* 事件列表 */
@@ -436,4 +441,44 @@
 .message a {
   color: var(--mantine-color-night287-2);
   text-decoration: underline;
+}
+
+/* ---- 网页全屏 theater（FR-5 · 设计 §2.3）---- */
+
+/* 舞台 fixed 占满浏览器可视区域，层级高于页头（z-index:100）；左画面 / 右事件列表 */
+.theater {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-9);
+  overflow: hidden;
+}
+
+.theater .videoColumn {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 尺寸容器：画面按「剩余空间」取 16:9 最大内接尺寸（container query 单位） */
+  container-type: size;
+  align-items: center;
+  justify-content: center;
+}
+
+.theater .videoArea {
+  /* 退化基线（不支持容器查询时）：撑满，画面仍由 object-fit 保持比例并居中 */
+  width: 100%;
+  /* 剩余宽高下的 16:9 最大内接宽度：尽可能大且不溢出 */
+  width: min(100%, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  margin: auto; /* 垂直水平居中（而非顶对齐） */
+}
+
+.theater .timeline {
+  flex: 0 0 clamp(320px, 26vw, 360px);
+  min-width: 0;
+  min-height: 0;
+  max-height: none; /* 右侧事件列表全高滚动 */
 }

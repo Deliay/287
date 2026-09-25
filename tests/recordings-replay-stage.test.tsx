@@ -19,6 +19,7 @@ import {
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
+import styles from "@/features/recordings/replay/replay-stage.module.css";
 import { GLYPH_RE, renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
@@ -319,52 +320,106 @@ describe("FR-1 控件浮层化（T5 / AC-1 · 设计 §2.1）", () => {
   });
 });
 
-describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
-  /** mock Fullscreen API：jsdom 无实现，逐用例注入并在 afterEach 还原。 */
-  function stubFullscreenApi(): FullscreenApiMock {
-    const proto = Element.prototype as unknown as Record<string, unknown>;
-    const doc = document as unknown as Record<string, unknown>;
-    const originalRequest = proto.requestFullscreen;
-    const originalExit = doc.exitFullscreen;
-    const originalDescriptor = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
-    let element: Element | null = null;
+describe("FR-5 网页全屏 theater（T7 / AC-5 · 设计 §2.3）", () => {
+  const CSS_PATH = path.join(
+    process.cwd(),
+    "src/features/recordings/replay/replay-stage.module.css",
+  );
 
-    const dispatch = () => document.dispatchEvent(new Event("fullscreenchange"));
-    const requestFullscreen = vi.fn(function (this: Element) {
-      element = this;
-      dispatch();
-      return Promise.resolve();
-    });
-    const exitFullscreen = vi.fn(() => {
-      element = null;
-      dispatch();
-      return Promise.resolve();
-    });
-    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
-    proto.requestFullscreen = requestFullscreen;
-    doc.exitFullscreen = exitFullscreen;
-
-    restoreFullscreen = () => {
-      if (originalRequest === undefined) delete proto.requestFullscreen;
-      else proto.requestFullscreen = originalRequest;
-      if (originalExit === undefined) delete doc.exitFullscreen;
-      else doc.exitFullscreen = originalExit;
-      if (originalDescriptor) Object.defineProperty(document, "fullscreenElement", originalDescriptor);
-      else delete doc.fullscreenElement;
-      restoreFullscreen = null;
-    };
-
-    return {
-      requestFullscreen,
-      exitFullscreen,
-      /** 模拟浏览器原生退出（Esc）：fullscreenElement 置空并派发 fullscreenchange。 */
-      escapeNatively() {
-        element = null;
-        dispatch();
-      },
-    };
+  function layoutElement(): HTMLElement {
+    return document.querySelector(`.${styles.layout}`) as HTMLElement;
   }
 
+  it("点击「网页全屏」切换 theater 布局 class 与 aria-pressed，再次点击恢复原布局", async () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const button = screen.getByRole("button", { name: "网页全屏" });
+    const layout = layoutElement();
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(layout).not.toHaveClass(styles.theater);
+
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(layout).toHaveAttribute("data-theater", "true");
+    expect(layout).toHaveClass(styles.theater);
+
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(layout).not.toHaveClass(styles.theater);
+  });
+
+  it("theater 布局 CSS：舞台 fixed 满窗、右列表全高滚动、画面在左容器内居中且保持 16:9（非顶对齐）", () => {
+    const css = readFileSync(CSS_PATH, "utf8");
+
+    const theaterBody = ruleBody(css, "theater");
+    expect(theaterBody).toMatch(/position:\s*fixed/);
+    expect(theaterBody).toMatch(/inset:\s*0/);
+    expect(theaterBody).toMatch(/z-index:\s*(1\d\d|2\d\d|3\d\d)/); // 层级高于页头（z-index:100）
+
+    const columnBody = ruleBody(css, "theater .videoColumn");
+    expect(columnBody).toMatch(/align-items:\s*center/);
+    expect(columnBody).toMatch(/justify-content:\s*center/);
+
+    const areaBody = ruleBody(css, "theater .videoArea");
+    expect(areaBody).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
+    expect(areaBody).toMatch(/width:\s*min\(/); // 尽可能大且不溢出剩余空间
+    expect(areaBody).toMatch(/margin:\s*auto|align-self:\s*center/); // 居中，非顶对齐
+
+    const timelineBody = ruleBody(css, "theater .timeline");
+    expect(timelineBody).toMatch(/max-height:\s*none/); // 右侧事件列表全高滚动
+  });
+
+  it("与浏览器全屏互斥：进入全屏暂退 theater 并记住，退出后恢复（theater → 全屏 → Esc）", async () => {
+    const api = stubFullscreenApi();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const layout = layoutElement();
+    const theaterButton = screen.getByRole("button", { name: "网页全屏" });
+    const group = screen.getByRole("group", { name: "播放控件" });
+
+    fireEvent.click(theaterButton);
+    expect(layout).toHaveAttribute("data-theater", "true");
+
+    // 进入浏览器全屏 → theater 暂退（单一事实源 document.fullscreenElement）
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(theaterButton).toHaveAttribute("aria-pressed", "false");
+
+    // Esc 退出浏览器全屏 → 恢复进入前状态
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
+    expect(layout).toHaveAttribute("data-theater", "true");
+
+    // 未开启 theater 时进出全屏：退出后不得凭空开启
+    fireEvent.click(theaterButton);
+    expect(layout).toHaveAttribute("data-theater", "false");
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
+    expect(layout).toHaveAttribute("data-theater", "false");
+  });
+
+  it("移动端断点不出现网页全屏入口（按钮 CSS 隐藏，与音量滑杆同口径 · 设计 §2.3）", () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    const button = screen.getByRole("button", { name: "网页全屏" });
+    expect(button).toHaveClass(styles.theaterButton);
+
+    const css = readFileSync(CSS_PATH, "utf8");
+    const mobileRules =
+      css.match(/@media[^{]*max-width:\s*47\.99em[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(mobileRules).toMatch(/\.theaterButton\s*\{[^}]*display:\s*none/);
+  });
+});
+
+describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
   async function renderStage() {
     const deps = makeDeps();
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
