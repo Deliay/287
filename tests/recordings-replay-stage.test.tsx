@@ -117,6 +117,54 @@ interface FullscreenApiMock {
   escapeNatively(): void;
 }
 
+/**
+ * mock Fullscreen API（jsdom 无实现）：注入 `Element.prototype.requestFullscreen`、
+ * `document.exitFullscreen` 与 `document.fullscreenElement`，并在 afterEach 还原。
+ * T4（切换/状态回正）与 T7（与网页全屏互斥）共用。
+ */
+function stubFullscreenApi(): FullscreenApiMock {
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  const doc = document as unknown as Record<string, unknown>;
+  const originalRequest = proto.requestFullscreen;
+  const originalExit = doc.exitFullscreen;
+  const originalDescriptor = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+  let element: Element | null = null;
+
+  const dispatch = () => document.dispatchEvent(new Event("fullscreenchange"));
+  const requestFullscreen = vi.fn(function (this: Element) {
+    element = this;
+    dispatch();
+    return Promise.resolve();
+  });
+  const exitFullscreen = vi.fn(() => {
+    element = null;
+    dispatch();
+    return Promise.resolve();
+  });
+  Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+  proto.requestFullscreen = requestFullscreen;
+  doc.exitFullscreen = exitFullscreen;
+
+  restoreFullscreen = () => {
+    if (originalRequest === undefined) delete proto.requestFullscreen;
+    else proto.requestFullscreen = originalRequest;
+    if (originalExit === undefined) delete doc.exitFullscreen;
+    else doc.exitFullscreen = originalExit;
+    if (originalDescriptor) Object.defineProperty(document, "fullscreenElement", originalDescriptor);
+    else delete doc.fullscreenElement;
+    restoreFullscreen = null;
+  };
+
+  return {
+    requestFullscreen,
+    exitFullscreen,
+    escapeNatively() {
+      element = null;
+      dispatch();
+    },
+  };
+}
+
 beforeEach(() => {
   paramsHolder.current = "";
 });

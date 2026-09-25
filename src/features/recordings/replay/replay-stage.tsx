@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type PointerEvent as ReactPointerEvent,
   type UIEvent,
 } from "react";
 import Link from "next/link";
@@ -173,6 +174,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [seekError, setSeekError] = useState<string | null>(null);
   /** 进度条拖动预览值：松开才真正 seek（审核 P3-a） */
   const [draftTime, setDraftTime] = useState<number | null>(null);
+  /** 进度条 hover 时间预览（FR-3）：仅鼠标指针写入，pointerleave 置空 */
+  const [hoverPreview, setHoverPreview] = useState<{ ratio: number; time: number } | null>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const volumeBeforeMuteRef = useRef(1);
@@ -649,6 +652,27 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const seekFailed = seekError !== null;
   /** 控件浮层显隐（FR-1）：仅「播放中 + 静止超时」隐藏；暂停时恒常显（设计 §2.1）。 */
   const controlsHidden = playing && controlsIdle;
+  /**
+   * 进度条预览气泡（FR-3 · 设计 §2.2）：拖动中的 draft 值优先显示、hover 让位；
+   * `ratio` 仅用于气泡跟随定位（0–1）。
+   */
+  const preview =
+    draftTime !== null
+      ? {
+          ratio: duration > 0 ? Math.min(1, Math.max(0, draftTime / duration)) : 0,
+          time: draftTime,
+        }
+      : hoverPreview;
+
+  /** 鼠标在进度条上移动 → 跟随指针的目标时间预览（仅 mouse 指针启用，touch 不显示）。 */
+  const handleProgressPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "mouse") return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const offsetX = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+    const ratio = offsetX / rect.width;
+    setHoverPreview({ ratio, time: ratio * duration });
+  };
 
   return (
     <div className={styles.stage} data-testid="replay-stage">
@@ -741,7 +765,11 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                     {playing ? <IconPause /> : <IconPlay />}
                   </button>
 
-                  <div className={styles.progressWrap}>
+                  <div
+                    className={styles.progressWrap}
+                    onPointerMove={handleProgressPointerMove}
+                    onPointerLeave={() => setHoverPreview(null)}
+                  >
                     {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
                     <div className={styles.progressTrack} aria-hidden="true">
                       <div data-testid="buffered-bar" className={styles.bufferedBar}>
@@ -813,6 +841,16 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                         }
                       }}
                     />
+                    {preview !== null && (
+                      <span
+                        className={styles.progressPreview}
+                        data-testid="progress-preview"
+                        aria-hidden="true"
+                        style={{ left: `${preview.ratio * 100}%` }}
+                      >
+                        {formatOffset(preview.time)}
+                      </span>
+                    )}
                   </div>
                   <span className={styles.time} aria-label="播放时间">
                     {formatOffset(currentTime)} / {formatOffset(duration)}
