@@ -147,6 +147,18 @@ export function IconTheater({ className, style }: IconProps) {
   );
 }
 
+/** 全屏退出（⛶ 内收，FR-4：与进入全屏图标可区分，切换态同步）。 */
+export function IconFullscreenExit({ className, style }: IconProps) {
+  return (
+    <svg {...ICON_SVG} className={className} style={wrapperStyle(style)}>
+      <path d="M4.5 9H9V4.5" />
+      <path d="M19.5 9H15V4.5" />
+      <path d="M4.5 15H9V19.5" />
+      <path d="M19.5 15H15V19.5" />
+    </svg>
+  );
+}
+
 /** 音量（🔊，回放控件音量前缀）。 */
 export function IconVolume({ className, style }: IconProps) {
   return (

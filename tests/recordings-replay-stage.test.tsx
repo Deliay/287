@@ -105,6 +105,16 @@ function makeDeps(overrides: Partial<ReplayStageDeps> = {}): ReplayStageDeps {
 
 let restoreLoader: (() => void) | null = null;
 
+/** T4：Fullscreen API mock 的还原钩子（afterEach 统一调用）。 */
+let restoreFullscreen: (() => void) | null = null;
+
+interface FullscreenApiMock {
+  requestFullscreen: ReturnType<typeof vi.fn>;
+  exitFullscreen: ReturnType<typeof vi.fn>;
+  /** 模拟浏览器原生退出（Esc）路径。 */
+  escapeNatively(): void;
+}
+
 beforeEach(() => {
   paramsHolder.current = "";
 });
@@ -112,6 +122,8 @@ beforeEach(() => {
 afterEach(() => {
   restoreLoader?.();
   restoreLoader = null;
+  restoreFullscreen?.();
+  restoreFullscreen = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
@@ -120,7 +132,7 @@ afterEach(() => {
 /** 冲刷微任务（避免依赖 waitFor 的时钟推进） */
 describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
   /** mock Fullscreen API：jsdom 无实现，逐用例注入并在 afterEach 还原。 */
-  function stubFullscreenApi() {
+  function stubFullscreenApi(): FullscreenApiMock {
     const proto = Element.prototype as unknown as Record<string, unknown>;
     const doc = document as unknown as Record<string, unknown>;
     const originalRequest = proto.requestFullscreen;
@@ -169,7 +181,7 @@ describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
     await flush();
     const group = screen.getByRole("group", { name: "播放控件" });
-    return { group, fullscreenButton: () => within(group).getByRole("button", { name: /^退出全屏$|^全屏$/ }) };
+    return { group };
   }
 
   it("全屏按钮为切换：未全屏点击 requestFullscreen，已全屏点击 exitFullscreen", async () => {
@@ -185,7 +197,7 @@ describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
   });
 
   it("状态同步：进入全屏后图标/aria-pressed 切换；Esc 原生退出后恢复「进入全屏」态", async () => {
-    stubFullscreenApi();
+    const api = stubFullscreenApi();
     const { group } = await renderStage();
     const button = within(group).getByRole("button", { name: "全屏" });
     const iconOf = () =>
@@ -202,7 +214,10 @@ describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
     expect(exitButton.querySelector("svg")).not.toBeNull();
 
     // Esc 等浏览器原生退出路径：状态回正，不残留错误状态
-    stubFullscreenApiEscapeExit();
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
     const restored = within(group).getByRole("button", { name: "全屏" });
     expect(restored).toHaveAttribute("aria-pressed", "false");
     expect(iconOf()).toBe(expandIcon);

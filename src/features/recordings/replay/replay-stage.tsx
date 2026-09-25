@@ -14,6 +14,7 @@ import { useSearchParams } from "next/navigation";
 import {
   IconArrowLeft,
   IconFullscreen,
+  IconFullscreenExit,
   IconPause,
   IconPlay,
   IconVolume,
@@ -180,6 +181,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [controlsIdle, setControlsIdle] = useState(false);
   const [controlsActivity, setControlsActivity] = useState(0);
   const [following, setFollowing] = useState(true);
+  /**
+   * 是否处于原生全屏（FR-4）：以 `document.fullscreenElement` 为单一事实源，
+   * `fullscreenchange` 驱动回正——覆盖点击切换与 Esc 等浏览器原生退出路径。
+   */
+  const [isFullscreen, setIsFullscreen] = useState(
+    () => typeof document !== "undefined" && Boolean(document.fullscreenElement),
+  );
 
   const startReplay = deps.startReplay ?? defaultStartReplay;
   const destroyReplay = deps.destroyReplay ?? defaultDestroyReplay;
@@ -320,6 +328,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     const timer = window.setTimeout(() => setControlsIdle(true), CONTROLS_HIDE_MS);
     return () => window.clearTimeout(timer);
   }, [playing, controlsActivity]);
+
+  // 全屏状态同步（FR-4）：挂载注册、卸载移除；Esc 原生退出后按钮态回正
+  useEffect(() => {
+    const handleFullscreenChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
 
   /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
@@ -612,7 +627,17 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     if (videoRef.current) videoRef.current.playbackRate = next;
   };
 
+  /**
+   * 全屏切换（FR-4 · 设计 §2.3）：已全屏 → 退出，未全屏 → 进入。
+   * 修复「全屏后再次点击无法退出」的根因：原实现无条件 `requestFullscreen()`，
+   * 重复请求被 `.catch` 静默吞掉（技术方案 §3.2 / 实现计划 T4）。
+   */
   const handleFullscreen = () => {
+    if (document.fullscreenElement) {
+      const exit = document.exitFullscreen;
+      if (typeof exit === "function") void exit.call(document).catch(() => {});
+      return;
+    }
     const container = containerRef.current;
     if (container && typeof container.requestFullscreen === "function") {
       void container.requestFullscreen().catch(() => {});
@@ -846,8 +871,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 ))}
               </select>
 
-              <button type="button" aria-label="全屏" onClick={handleFullscreen}>
-                <IconFullscreen />
+              <button
+                type="button"
+                aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                aria-pressed={isFullscreen}
+                onClick={handleFullscreen}
+              >
+                {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
               </button>
 
               <button

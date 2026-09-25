@@ -90,6 +90,21 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  /* 任意容器比例下保持画面比例（原生全屏 / 网页全屏容器非 16:9 时不拉伸） */
+  object-fit: contain;
+}
+
+/* 原生全屏（FR-4 · T4 骨架，浮层贴底细节并入 T5）：videoArea 撑满可视区 */
+.videoColumn:fullscreen {
+  gap: 0;
+  background: #000;
+}
+
+.videoColumn:fullscreen .videoArea {
+  flex: 1 1 auto;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
 }
 
 .overlayState,
