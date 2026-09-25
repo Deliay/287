@@ -1,9 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import { MemberSection } from "@/components/member-section";
 import styles from "@/components/member-section.module.css";
 import { members } from "@/data/members";
 import { renderWithTheme } from "./utils";
+
+const useLiveStatusMock = vi.hoisted(() => vi.fn());
 
 // LiveBadge 由 tests/live-badge.test.tsx 单独覆盖，此处用桩组件断言装配关系
 vi.mock("@/components/live-badge", () => ({
@@ -11,6 +13,15 @@ vi.mock("@/components/live-badge", () => ({
     <span data-testid="live-badge" data-member-id={member.id} />
   ),
 }));
+
+// 录播入口用真实组件断言链接；直播状态统一打桩（默认未开播）
+vi.mock("@/lib/live-status", () => ({
+  useLiveStatus: useLiveStatusMock,
+}));
+
+beforeEach(() => {
+  useLiveStatusMock.mockReturnValue({ status: { living: false, title: null } });
+});
 
 describe("成员介绍区 MemberSection", () => {
   it("渲染成员中文名、罗马音、称号与简介摘要", () => {
@@ -45,6 +56,30 @@ describe("成员介绍区 MemberSection", () => {
     expect(link).toHaveAttribute("href", member.bilibili);
     expect(link).toHaveAttribute("target", "_blank");
     expect(link.getAttribute("rel") ?? "").toContain("noopener");
+  });
+
+  it("未开播时详情区在徽章下方挂载录播入口，指向 /recordings?member={id}（AC-8）", () => {
+    const member = members[0];
+    renderWithTheme(<MemberSection member={member} index={0} />);
+
+    const link = screen.getByRole("link", { name: "未开播，看录播 ->" });
+    expect(link).toHaveAttribute("href", `/recordings?member=${member.id}`);
+    const section = screen.getByRole("region", { name: new RegExp(member.name) });
+    expect(section.contains(link)).toBe(true);
+    // 位于 LiveBadge 下方（FR-4：详情区内、徽章之后）
+    const badge = screen.getByTestId("live-badge");
+    expect(
+      badge.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("开播时不渲染录播入口（AC-8）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    renderWithTheme(<MemberSection member={members[1]} index={1} />);
+
+    expect(screen.queryByRole("link", { name: "未开播，看录播 ->" })).toBeNull();
   });
 
   it("立绘 img 的 alt 含成员名", () => {

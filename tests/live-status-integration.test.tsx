@@ -31,6 +31,15 @@ describe("直播状态缓存共享（AC-5 集成回归，Review P2-3）", () => 
     const badges = await screen.findAllByText("未开播");
     expect(badges).toHaveLength(8);
 
+    // 详情区 4 个录播入口复用同一批直播状态请求（PRD §5 / AC-8：不引入额外请求）
+    const entries = await screen.findAllByRole("link", {
+      name: "未开播，看录播 ->",
+    });
+    expect(entries).toHaveLength(4);
+    expect(entries.map((entry) => entry.getAttribute("href"))).toEqual(
+      members.map((member) => `/recordings?member=${member.id}`),
+    );
+
     // 每成员只请求一次，且地址为成员的 liveStatusUrl（非开发态直连）
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock.mock.calls.map((call) => call[0])).toEqual(

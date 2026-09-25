@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import Image from "next/image";
 import type { Member } from "@/data/members";
 import { LiveBadge } from "@/components/live-badge";
+import { RecordingEntry } from "@/components/recording-entry";
 import styles from "./member-section.module.css";
 
 export interface MemberSectionProps {
@@ -37,6 +38,8 @@ export function MemberSection({ member, index }: MemberSectionProps) {
         <p className={styles.subtitle}>{member.title}</p>
         <p className={styles.description}>{member.description}</p>
         <LiveBadge member={member} />
+        {/* FR-4：未开播时提供录播入口（HeroWall 不挂载，PRD 仅覆盖详情区） */}
+        <RecordingEntry member={member} />
         <a
           className={styles.cta}
           href={member.bilibili}

@@ -1,0 +1,12 @@
+/* 未开播录播入口（PRD FR-4）：详情区内一行文本链接。
+   沿用现有排版与成员代表色，设计文档补齐前不新增视觉规格（技术方案 §1）。 */
+.entry {
+  align-self: flex-start;
+  color: var(--member-accent);
+  font-weight: 600;
+}
+
+.entry:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
