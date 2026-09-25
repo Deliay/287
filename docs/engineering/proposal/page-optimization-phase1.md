@@ -1,6 +1,6 @@
 # 页面优化一期 — 技术方案
 
-- 版本：v1.0
+- 版本：v1.1（2026-09-25 返工：roomId 经线上接口实测确认，改为静态硬编码方案）
 - 日期：2026-09-25
 - 状态：待评审
 
@@ -21,11 +21,11 @@
 
 涉及文件：
 
-- `src/lib/live-status.ts`：`LiveStatus` 增加 `roomId: number | null` 字段；`parseStatus` 防御性解析接口返回中的 `roomId`（`status.roomId`，非数字则置 null）；`OFFLINE` 常量同步补 `roomId: null`。
-- `src/data/members.ts`：为四位成员补齐静态 `roomId` 字段（字段已存在于 `Member` 类型，`members.ts:16`），作为接口未返回时的兜底。
-- `src/components/live-badge.tsx`：开播分支的 `href` 改为按优先级取值——`status.roomId ?? member.roomId` 存在时渲染 `https://live.bilibili.com/{roomId}`，否则降级为 `member.bilibili`（个人主页）。
+- `src/data/members.ts`：为四位成员补齐静态 `roomId` 字段（字段已存在于 `Member` 类型，`members.ts:16`）。roomId 已通过线上录播服务接口实际确认（见 §4 对照表），B 站直播间号长期不变，硬编码是可靠数据源。
+- `src/components/live-badge.tsx`：开播分支的 `href` 改为 `member.roomId` 存在时渲染 `https://live.bilibili.com/{roomId}`，否则降级为 `member.bilibili`（个人主页）。
+- `src/lib/live-status.ts`：**不改**。直播状态接口实测返回结构为 `{ ok, status: { live, title, startedAt } }`，不含 roomId；roomId 全部来自成员静态数据。
 
-数据流：直播状态接口（`member.liveStatusUrl`）→ `fetchLiveStatus` 模块级缓存 → `useLiveStatus` → `LiveBadge`。roomId 仅作为状态数据新增一个透传字段，不改变请求时序与缓存结构；`HeroWall` / `MemberSection` 内嵌的徽章共用同一组件，改动一处即同时覆盖两个位置。
+数据流：直播状态接口（`member.liveStatusUrl`）→ `fetchLiveStatus` 模块级缓存 → `useLiveStatus` → `LiveBadge`（仅取 `living`/`title`）；跳转目标由成员静态 `roomId` 决定，与状态请求完全解耦。`HeroWall` / `MemberSection` 内嵌的徽章共用同一组件，改动一处即同时覆盖两个位置。
 
 ### FR-2 滚动吸附动效
 
@@ -58,35 +58,34 @@
 
 ## 4. 接口设计
 
-- `LiveStatus`（`src/lib/live-status.ts`）：
+- roomId 对照表（2026-09-25 通过录播服务 `GET https://recordings.vtuber.fffdan.com/api/b/live/recording-status` 按 `mid` 关联实测确认）：
 
-  ```ts
-  export interface LiveStatus {
-    living: boolean;
-    title: string | null;
-    /** 开播时的直播间 ID；接口未返回时为 null，调用方回退到成员静态数据 */
-    roomId: number | null;
-  }
-  ```
+  | 成员 | mid | roomId | 直播间 |
+  |------|-----|--------|--------|
+  | viridis（小松绿） | 1891335475 | 1727071052 | https://live.bilibili.com/1727071052 |
+  | komichi（四时小路） | 1512246445 | 1700301235 | https://live.bilibili.com/1700301235 |
+  | chu2u（羽啾） | 2138961136 | 1727074031 | https://live.bilibili.com/1727074031 |
+  | sumire（枝堇） | 1150976664 | 1727076670 | https://live.bilibili.com/1727076670 |
 
+- `Member.roomId`（`src/data/members.ts:16`，已有可选字段）：按上表硬编码补齐；B 站直播间号与账号绑定、长期不变，静态数据即可作为权威来源。
 - 直播间 URL 拼装：`https://live.bilibili.com/${roomId}`（集中为一个纯函数，便于测试）。
 - 录播页 URL：`/recordings?member={memberId}`（FR-3 / FR-4 共用同一约定）。
 - `MemberGroup` 受控化后的 props：`{ member, expanded, onToggle }`（其余数据加载逻辑保留在组件内部）。
 
 ## 5. 风险与权衡
 
-- **roomId 数据源**：直播状态接口当前实测结构为 `{ ok, status: { live, title } }`，是否返回 `roomId` 未经线上确认；`members.ts` 中四位成员的静态 `roomId` 尚未填写。方案采用「接口返回优先 + 静态数据兜底 + 个人主页降级」三级链，任一环节缺失都不会渲染无效链接。实现阶段需向录播/直播服务方确认四位成员的 roomId 并补入数据文件。
+- **roomId 数据源（已实测闭环）**：直播状态接口实测返回 `{ ok, status: { live, title, startedAt } }`，不含 roomId；roomId 已通过录播服务 recording-status 接口按 `mid` 关联确认（§4 对照表），直播间号长期不变，采用静态硬编码 + `member.bilibili` 个人主页降级两级链。若未来成员更换直播间，需同步更新 `members.ts`（可在数据文件中注明来源接口便于复核）。
 - **手风琴与既有联动**：`REVEAL_GROUP_EVENT` 目前假设多分组可并存展开；上移状态后该事件改为「切换展开目标」，行为变化已由 PRD FR-3 覆盖（录播页状态卡片点击 → 展开对应分组并收起其他）。备选方案是保留多展开、仅把「最后展开的分组」写入 URL——被否，因 PRD 明确要求单展开。
 - **`useSearchParams` 与静态导出**：静态导出下未包 Suspense 的 `useSearchParams` 会导致构建期报错，必须以 Suspense 边界隔离；或退化为 `useEffect` 内读取 `window.location.search`（失去声明式但规避构建约束）。首选 Suspense 方案，构建验证不通过时退化。
 - **动效参数主观性**：lenis 的 `duration`/`easing` 取值属体验调优，以实现评审时的实际手感为准，测试只断言「吸附为动画过程」而非具体参数。
-- **行为变更面**：`LiveStatus` 增加字段、`MemberGroup` 受控化均涉及既有测试更新（`tests/live-status.test.ts`、`tests/recordings-section.test.tsx` 等），按 TDD 先改测试。
+- **行为变更面**：`MemberGroup` 受控化涉及既有测试更新（`tests/recordings-section.test.tsx` 等），按 TDD 先改测试。
 
 ## 6. 测试策略
 
 遵循 TDD 红-绿-重构，测试平铺于 `tests/`，复用 `renderWithTheme` 与 `vi.hoisted` + `vi.mock` 的数据层 mock 模式：
 
-- `tests/live-status.test.ts`：`parseStatus` 解析 `roomId`（数字透传 / 缺失或畸形置 null）；`OFFLINE` 含 `roomId: null`。
-- `tests/live-badge.test.tsx`（改）：开播且 roomId 可用 → `href=https://live.bilibili.com/{roomId}`（AC-1）；roomId 缺失 → 降级 `member.bilibili`（AC-2）；未开播/加载中不可点击（AC-3）。
+- `tests/members.test.ts`（改）：四位成员均已填写 `roomId` 且为有效数字（防止后续数据回退）。
+- `tests/live-badge.test.tsx`（改）：开播且 `member.roomId` 存在 → `href=https://live.bilibili.com/{roomId}`（AC-1）；构造无 `roomId` 的成员 → 降级 `member.bilibili`（AC-2）；未开播/加载中不可点击（AC-3）。
 - 新增 `tests/recording-entry.test.tsx`：未开播渲染「未开播，看录播 ->」且 `href=/recordings?member={id}`；开播与加载中不渲染（AC-8）。
 - `tests/member-section.test.tsx`（改）：详情区挂载录播入口。
 - `tests/recordings-section.test.tsx`（改 + 增）：手风琴单展开（AC-5）；展开/收起时 URL 参数写删（AC-6，jsdom 下断言 `window.location.search`）；带 `?member=` 初始渲染自动展开并触发加载、无效参数忽略（AC-7）；`REVEAL_GROUP_EVENT` 联动后 URL 同步。
