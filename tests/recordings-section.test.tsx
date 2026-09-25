@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { MantineProvider } from "@mantine/core";
 import { RecordingsSection, sortRecordings } from "@/features/recordings/recordings-section";
+import { recordingFileUrl } from "@/features/recordings/api";
 import { LiveStatusGrid } from "@/features/recordings/live-status-grid";
 import type { RecordingStatusItem } from "@/features/recordings/types";
 import { theme } from "@/theme";
@@ -181,7 +182,7 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("带空格")).toBeInTheDocument());
 
-    const link = within(screen.getByTestId("recordings-viridis-list")).getByRole("link");
+    const link = screen.getByTestId("recording-title").closest("a") as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe(
       `/recordings/replay?roomId=1001&file=${encodeURIComponent(fileName)}`,
     );
@@ -387,21 +388,16 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     const { rerender } = rtlRender(tree(statusItems));
     fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
     await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
-    expect(
-      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
-    ).toContain("roomId=1001");
+    const titleLink = () => screen.getByTestId("recording-title").closest("a") as HTMLAnchorElement;
+    expect(titleLink().getAttribute("href")).toContain("roomId=1001");
 
     // 30s 轮询后房间号漂移：列表仍是 1001 的数据 → 链接不得被改成新房间
     const drifted = statusItems.map((item) =>
       item.mid === 1891335475 ? { ...item, roomId: 9999 } : item,
     );
     rerender(tree(drifted));
-    expect(
-      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
-    ).toContain("roomId=1001");
-    expect(
-      within(screen.getByTestId("recordings-viridis-list")).getByRole("link").getAttribute("href"),
-    ).not.toContain("roomId=9999");
+    expect(titleLink().getAttribute("href")).toContain("roomId=1001");
+    expect(titleLink().getAttribute("href")).not.toContain("roomId=9999");
   });
 
   it("次要6 sortRecordings 对空串 startedAt 回退 createdAt 排序", () => {
@@ -579,6 +575,80 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     // 红：当前补跑复用 load() 首行无条件 setExpanded(true) → 分组被强制重新展开
     expect(header()).toHaveAttribute("aria-expanded", "false");
     expect(fetchMock).toHaveBeenCalledTimes(1); // 静默加载，无重复取数
+  });
+});
+
+describe("历史录播条目按钮组 播放/下载（T3 / AC-2 · FR-2 · 设计 §2.5）", () => {
+  async function renderOneItem() {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+    fireEvent.click(screen.getByTestId("recordings-group-viridis").querySelector("button") as HTMLElement);
+    await waitFor(() => expect(screen.getByText("游玩饥荒")).toBeInTheDocument());
+    const item = screen.getAllByTestId("recording-item")[0] as HTMLElement;
+    return { fetchMock, item };
+  }
+
+  it("条目右侧渲染按钮组：主按钮「播放」href 与条目本体一致", async () => {
+    const { item } = await renderOneItem();
+
+    const titleLink = screen.getByTestId("recording-title").closest("a") as HTMLAnchorElement;
+    const play = within(item).getByRole("link", { name: "播放" });
+    expect(play.getAttribute("href")).toBe(titleLink.getAttribute("href"));
+    expect(play.getAttribute("href")).toContain("/recordings/replay?roomId=1001&file=a.flv");
+    // 下拉开关与「下载」在收起态不出现
+    expect(within(item).getByRole("button", { name: /更多操作/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(within(item).queryByRole("link", { name: "下载" })).not.toBeInTheDocument();
+  });
+
+  it("点击下拉箭头展开菜单出现「下载」：href 指向 recordingFileUrl 且带 download（文件名一致）", async () => {
+    const { item } = await renderOneItem();
+
+    fireEvent.click(within(item).getByRole("button", { name: /更多操作/ }));
+    const download = within(item).getByRole("link", { name: "下载" });
+    expect(download.getAttribute("href")).toBe(recordingFileUrl(1001, "a.flv"));
+    expect(download.getAttribute("download")).toBe("a.flv");
+    expect(
+      within(item).getByRole("button", { name: /更多操作/ }),
+    ).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("点击外部 / Esc 收起菜单；条目本体点击仍进回放页（不回归、零新增请求）", async () => {
+    const { fetchMock, item } = await renderOneItem();
+    const toggle = within(item).getByRole("button", { name: /更多操作/ });
+
+    fireEvent.click(toggle);
+    expect(within(item).queryByRole("link", { name: "下载" })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(within(item).queryByRole("link", { name: "下载" })).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    fireEvent.click(document.body);
+    expect(within(item).queryByRole("link", { name: "下载" })).not.toBeInTheDocument();
+
+    // 条目本体仍指向站内回放页，点击不触发任何取数（R14-1 不回归）
+    const titleLink = screen.getByTestId("recording-title").closest("a") as HTMLAnchorElement;
+    expect(titleLink.getAttribute("href")).toBe("/recordings/replay?roomId=1001&file=a.flv");
+    fireEvent.click(titleLink);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("按钮组图标为内联 SVG、无 emoji/Unicode 字形（R14-5 口径）", async () => {
+    const { item } = await renderOneItem();
+    fireEvent.click(within(item).getByRole("button", { name: /更多操作/ }));
+
+    const play = within(item).getByRole("link", { name: "播放" });
+    const download = within(item).getByRole("link", { name: "下载" });
+    const toggle = within(item).getByRole("button", { name: /更多操作/ });
+    for (const node of [play, download, toggle]) {
+      expect(node.querySelector("svg")).not.toBeNull();
+    }
+    expect(GLYPH_RE.test(item.textContent ?? "")).toBe(false);
   });
 });
 

@@ -118,6 +118,106 @@ afterEach(() => {
 });
 
 /** 冲刷微任务（避免依赖 waitFor 的时钟推进） */
+describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
+  /** mock Fullscreen API：jsdom 无实现，逐用例注入并在 afterEach 还原。 */
+  function stubFullscreenApi() {
+    const proto = Element.prototype as unknown as Record<string, unknown>;
+    const doc = document as unknown as Record<string, unknown>;
+    const originalRequest = proto.requestFullscreen;
+    const originalExit = doc.exitFullscreen;
+    const originalDescriptor = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+    let element: Element | null = null;
+
+    const dispatch = () => document.dispatchEvent(new Event("fullscreenchange"));
+    const requestFullscreen = vi.fn(function (this: Element) {
+      element = this;
+      dispatch();
+      return Promise.resolve();
+    });
+    const exitFullscreen = vi.fn(() => {
+      element = null;
+      dispatch();
+      return Promise.resolve();
+    });
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+    proto.requestFullscreen = requestFullscreen;
+    doc.exitFullscreen = exitFullscreen;
+
+    restoreFullscreen = () => {
+      if (originalRequest === undefined) delete proto.requestFullscreen;
+      else proto.requestFullscreen = originalRequest;
+      if (originalExit === undefined) delete doc.exitFullscreen;
+      else doc.exitFullscreen = originalExit;
+      if (originalDescriptor) Object.defineProperty(document, "fullscreenElement", originalDescriptor);
+      else delete doc.fullscreenElement;
+      restoreFullscreen = null;
+    };
+
+    return {
+      requestFullscreen,
+      exitFullscreen,
+      /** 模拟浏览器原生退出（Esc）：fullscreenElement 置空并派发 fullscreenchange。 */
+      escapeNatively() {
+        element = null;
+        dispatch();
+      },
+    };
+  }
+
+  async function renderStage() {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const group = screen.getByRole("group", { name: "播放控件" });
+    return { group, fullscreenButton: () => within(group).getByRole("button", { name: /^退出全屏$|^全屏$/ }) };
+  }
+
+  it("全屏按钮为切换：未全屏点击 requestFullscreen，已全屏点击 exitFullscreen", async () => {
+    const api = stubFullscreenApi();
+    const { group } = await renderStage();
+
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    expect(api.requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(api.exitFullscreen).not.toHaveBeenCalled();
+
+    fireEvent.click(within(group).getByRole("button", { name: "退出全屏" }));
+    expect(api.exitFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("状态同步：进入全屏后图标/aria-pressed 切换；Esc 原生退出后恢复「进入全屏」态", async () => {
+    stubFullscreenApi();
+    const { group } = await renderStage();
+    const button = within(group).getByRole("button", { name: "全屏" });
+    const iconOf = () =>
+      Array.from(button.querySelectorAll("path"))
+        .map((path) => path.getAttribute("d"))
+        .join("|");
+    const expandIcon = iconOf();
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(button); // 进入全屏（mock 同步派发 fullscreenchange）
+    const exitButton = within(group).getByRole("button", { name: "退出全屏" });
+    expect(exitButton).toHaveAttribute("aria-pressed", "true");
+    expect(iconOf()).not.toBe(expandIcon); // 图标随状态切换（非同一图形）
+    expect(exitButton.querySelector("svg")).not.toBeNull();
+
+    // Esc 等浏览器原生退出路径：状态回正，不残留错误状态
+    stubFullscreenApiEscapeExit();
+    const restored = within(group).getByRole("button", { name: "全屏" });
+    expect(restored).toHaveAttribute("aria-pressed", "false");
+    expect(iconOf()).toBe(expandIcon);
+  });
+
+  it("R14-5 全屏按钮切换后仍为内联 SVG，无 emoji/Unicode 字形", async () => {
+    stubFullscreenApi();
+    const { group } = await renderStage();
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    const button = within(group).getByRole("button", { name: "退出全屏" });
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(button.textContent ?? "")).toBe(false);
+  });
+});
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
