@@ -146,6 +146,57 @@ describe("直播状态徽章 LiveBadge", () => {
   });
 });
 
+describe("未开播态替换渲染 offlineNode（PRD FR-4 返工 R1：替换而非并列）", () => {
+  const entryNode = <span data-testid="recording-entry" />;
+
+  it("未开播：渲染替换节点，且不再出现「未开播」纯文本（详情区替换语义）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: false, title: null },
+    });
+    renderWithTheme(
+      <LiveBadge member={members[0]} offlineNode={entryNode} />,
+    );
+
+    expect(screen.getByTestId("recording-entry")).toBeInTheDocument();
+    expect(screen.queryByText("未开播")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("开播：只见直播徽章，不渲染替换节点", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    renderWithTheme(
+      <LiveBadge member={members[1]} offlineNode={entryNode} />,
+    );
+
+    expect(screen.getByRole("link")).toHaveTextContent("正在直播：今晚杂谈");
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
+  });
+
+  it("加载中：只见占位骨架，替换节点与「未开播」文本均不出现", () => {
+    useLiveStatusMock.mockReturnValue({ status: null });
+    renderWithTheme(
+      <LiveBadge member={members[2]} offlineNode={entryNode} />,
+    );
+
+    expect(document.querySelector(`.${styles.skeleton}`)).not.toBeNull();
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
+    expect(screen.queryByText("未开播")).toBeNull();
+  });
+
+  it("未传 offlineNode（HeroWall 侧）保持「未开播」纯文本，AC-3 行为不回归", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: false, title: null },
+    });
+    renderWithTheme(<LiveBadge member={members[3]} />);
+
+    expect(screen.getByText("未开播")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
+  });
+});
+
 describe("直播状态徽章 LiveBadge 指针事件分层（R3 回归防护）", () => {
   it("非交互态关闭指针事件、仅开播态恢复 auto（徽章盒不成为面板点击死区）", () => {
     const css = readFileSync(

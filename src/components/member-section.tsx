@@ -37,9 +37,12 @@ export function MemberSection({ member, index }: MemberSectionProps) {
         </h2>
         <p className={styles.subtitle}>{member.title}</p>
         <p className={styles.description}>{member.description}</p>
-        <LiveBadge member={member} />
-        {/* FR-4：未开播时提供录播入口（HeroWall 不挂载，PRD 仅覆盖详情区） */}
-        <RecordingEntry member={member} />
+        {/* FR-4 返工 R1：录播入口**替换** LiveBadge 的未开播文本（同一位置二选一），
+            徽章为详情区直播状态的单一状态出口；HeroWall 不传 offlineNode，行为不变 */}
+        <LiveBadge
+          member={member}
+          offlineNode={<RecordingEntry member={member} />}
+        />
         <a
           className={styles.cta}
           href={member.bilibili}

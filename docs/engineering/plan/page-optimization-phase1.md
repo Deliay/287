@@ -1,9 +1,9 @@
 # 页面优化一期 — 技术实现计划
 
-- 版本：v1.1（2026-09-25 实施回填：T0–T6 完成标记、T2/T4/T5 实施补充与 §6 验收记录）
+- 版本：v1.2（2026-09-25 返工 R1：按下游 Review 意见修订 T5——文案改右箭头「→」、录播入口改为**替换**详情区「未开播」文本、`LiveBadge` 增加 `offlineNode` 作为单一状态出口；同步 PRD v1.1 / 技术方案 v1.2；此前 v1.1 为 T0–T6 实施回填）
 - 创建日期：2026-09-25
-- 对应技术方案：[docs/engineering/proposal/page-optimization-phase1.md](../proposal/page-optimization-phase1.md)（v1.1）
-- 对应需求：[docs/product/requirement/page-optimization-phase1.md](../../product/requirement/page-optimization-phase1.md)（v1.0）
+- 对应技术方案：[docs/engineering/proposal/page-optimization-phase1.md](../proposal/page-optimization-phase1.md)（v1.2）
+- 对应需求：[docs/product/requirement/page-optimization-phase1.md](../../product/requirement/page-optimization-phase1.md)（v1.1）
 - 对应设计：待补充（`../../product/design/page-optimization-phase1.md`）。本期变更均为链接目标、动效参数与状态同步，无新增视觉布局；FR-4 仅新增一行文本链接，沿用现有排版（技术方案 §1），不阻塞本计划执行。
 - 状态：已实施（T0–T6 完成，门禁全绿；待人工验收与评审）
 
@@ -86,20 +86,23 @@
 - 对应验收：AC-6、AC-7。
 - 预计：2h。
 
-### T5 ✅ 未开播录播入口 `src/components/recording-entry.tsx`（新增）+ `src/components/member-section.tsx`
+### T5 ✅ 未开播录播入口 `src/components/recording-entry.tsx`（新增）+ `src/components/member-section.tsx` + `src/components/live-badge.tsx`（返工 R1 修订）
 
 - 产出：
-  - 新增 `recording-entry.tsx`（Client 孤岛，与 `LiveBadge` 同构）：`useLiveStatus(member.id)` 复用模块级缓存（`live-status.ts:16-17`，同一成员页面生命周期只请求一次，不引入额外请求，PRD §5）。加载中渲染 `null`；开播渲染 `null`；未开播渲染站内链接「未开播，看录播 ->」，指向 `/recordings?member={member.id}`（用 `next/link`，站内跳转惯例同 `recordings-section.tsx:209`；`smooth-scroll.tsx:38` 的锚点拦截对非 `#` 链接自然放行）。
-  - `member-section.tsx:39`：在 `LiveBadge` 下方挂载 `<RecordingEntry member={member} />`；样式沿用现有排版（复用 `styles.cta` 或新增最小 CSS Module 类，设计文档补齐前不新增视觉规格）。
-  - 首页 HeroWall 不挂载该入口（PRD FR-4 仅覆盖详情区）。
-  - **实施补充（2026-09-25）**：样式取「新增最小 CSS Module」方案（`recording-entry.module.css` 的 `.entry`：`align-self: flex-start` + `color: var(--member-accent)` + hover 下划线）——既有 `styles.cta` 为 `width:50%; margin-left:50%` 的大填充按钮，与 FR-4「一行文本链接」口径不符；未引入新的视觉规格，沿用成员代表色。零额外请求由 `tests/live-status-integration.test.tsx` 集成断言（8 徽章 + 4 入口仍为 4 次请求）。
+  - **单一状态出口（返工 R1）**：`live-badge.tsx` 新增可选 prop `offlineNode`——未开播分支渲染 `offlineNode ?? <span className={styles.offline}>未开播</span>`，即「替换」而非「并列」；缺省不传时保持 AC-3 原行为（HeroWall 侧不变）。加载中骨架与开播徽章两分支不变。
+  - 新增 `recording-entry.tsx`（纯展示节点，**不自行订阅直播状态**）：渲染站内链接「未开播，看录播 →」（右箭头 U+2192），指向 `/recordings?member={member.id}`（用 `next/link`，站内跳转惯例同 `recordings-section.tsx:209`；`smooth-scroll.tsx:38` 的锚点拦截对非 `#` 链接自然放行）。状态判定上移至 `LiveBadge`，杜绝双行与重复订阅。
+  - `member-section.tsx:39`：改为 `<LiveBadge member={member} offlineNode={<RecordingEntry member={member} />} />`——详情区按状态三选一（未开播→仅入口 / 开播→仅徽章 / 加载中→仅骨架）。
+  - 取数口径不变：详情区仍经 `useLiveStatus(member.id)` 读模块级缓存（`live-status.ts:16-17`，同一成员页面生命周期只请求一次，不引入额外请求，PRD §5）。
+  - 首页 HeroWall 不挂载该入口（PRD FR-4 仅覆盖详情区），其未开播仍渲染「未开播」纯文本。
+  - **实施补充（2026-09-25）**：样式取「新增最小 CSS Module」方案（`recording-entry.module.css` 的 `.entry`：`align-self: flex-start` + `color: var(--member-accent)` + hover 下划线）——既有 `styles.cta` 为 `width:50%; margin-left:50%` 的大填充按钮，与 FR-4「一行文本链接」口径不符；未引入新的视觉规格，沿用成员代表色。零额外请求由 `tests/live-status-integration.test.tsx` 集成断言（HeroWall 4 个「未开播」+ 详情区 4 个录播入口仍为 4 次请求）。
 - **测试用例（红）**：
-  - 新增 `tests/recording-entry.test.tsx`（mock `useLiveStatus`）：
-    1. mock 未开播 → 渲染「未开播，看录播 ->」且 `href === /recordings?member={id}`（AC-8）。
-    2. mock 开播 / 加载中 → 不渲染任何内容（AC-8）。
-    3. 不触发额外 `fetchLiveStatus` 请求之外的调用（与 LiveBadge 共用缓存，模块级 mock 下断言调用次数不增加）。
-  - `tests/member-section.test.tsx`（改）：详情区挂载录播入口（mock 未开播时断言链接存在）。
-- 对应验收：AC-8。
+  - `tests/recording-entry.test.tsx`（改）：
+    1. 渲染「未开播，看录播 →」且 `href === /recordings?member={id}`，可读名与可见文案一致且不含 ASCII `->`（AC-8）。
+    2. 断言其为纯展示节点：不再调用 `useLiveStatus`（状态出口在 `LiveBadge`，避免重复订阅）。
+  - `tests/live-badge.test.tsx`（改）：新增 `offlineNode` 三态替换断言——未开播→渲染替换节点且不出现「未开播」文本；开播→仅徽章不含替换节点；加载中→仅骨架。保留 AC-3「未开播纯文本不可点击」（HeroWall 侧）回归断言。
+  - `tests/member-section.test.tsx`（改）：详情区替换语义三态互斥——未开播只见录播入口、不见「未开播」文本；开播只见徽章不见入口；加载中只见骨架两者皆无；并断言详情区仅一次 `useLiveStatus` 订阅。
+  - `tests/live-status-integration.test.tsx`（改）：未开播断言调整为「HeroWall 4 个『未开播』+ 详情区 4 个录播入口」，总请求仍为 4 次。
+- 对应验收：AC-8（返工 R1 口径：替换语义 + 右箭头文案）。
 - 预计：1h。
 
 ### T6 ✅ 全量验收
@@ -140,7 +143,7 @@ T3（手风琴状态上移）→ T4（URL 同步 + Suspense）→ T5（录播入
 | AC-5 单分组手风琴 | T3 | 单测（展开 B 收起 A、全页唯一 `aria-expanded="true"`） |
 | AC-6 URL 参数写删 | T4 | 单测（jsdom 断言 `window.location.search`，无刷新） |
 | AC-7 带参直达 / 无效忽略 | T4 | 单测（mock `useSearchParams`，自动展开 + 加载 / 无效忽略） |
-| AC-8 未开播录播入口 | T5 | 单测（三态渲染与 href）；人工验证首页 → 录播页联动 |
+| AC-8 未开播录播入口 | T5 | 单测（详情区三态互斥：替换语义 + 右箭头文案 + href；`LiveBadge` `offlineNode` 三态）；集成回归（4 入口 4 次请求）；人工验证首页 → 录播页联动 |
 | AC-9 全量回归 | 全部、T6 | `pnpm build && pnpm test && pnpm lint && npx tsc --noEmit`；新增/修改行为均有对应单测 |
 
 ## 4. 范围边界（沿用 PRD §6，实现期不得越界）
@@ -161,15 +164,32 @@ T3（手风琴状态上移）→ T4（URL 同步 + Suspense）→ T5（录播入
 
 - 实现分支：`feat/page-optimization-phase1-impl`（自需求总分支 `feat/page-optimization-phase1` 切出）。
 - 任务进度：T0 ✅ / T1 ✅ / T2 ✅ / T3 ✅ / T4 ✅ / T5 ✅ / T6 ✅（T1~T5 均按红→绿循环执行，红测试先确认因预期原因失败）。
-- 门禁结果（T6）：`pnpm build` ✅（静态导出含 `/`、`/recordings`、`/recordings/replay`）→ `pnpm test` ✅ 259 passed（27 files）→ `pnpm lint` ✅ → `npx tsc --noEmit` ✅。
+- 门禁结果（T6，返工 R1 后复跑）：`pnpm build` ✅（静态导出含 `/`、`/recordings`、`/recordings/replay`）→ `pnpm test` ✅ 264 passed（27 files）→ `pnpm lint` ✅ → `npx tsc --noEmit` ✅。
 - 验收对照：
   - AC-1 / AC-2 / AC-3 → T1 单测（`tests/live-badge.test.tsx`：直播间 href + target、无 roomId 降级、未开播/加载中无链接）。
   - AC-4 → T2 结构断言（Lenis/Snap 显式 `duration`+`easing`、`respectReducedMotion:false`）+ `src/` 无 `prefers-reduced-motion` 规则；**连续动画手感待人工验收**。
   - AC-5 → T3 单测（展开 B 收起 A、全页唯一 `aria-expanded="true"`）。
   - AC-6 / AC-7 → T4 单测（`window.location.search` 写删 + `pushState` 未调用、带参直达展开并恰好一次取数 + 滚动定位、无效参数忽略零请求）。
-  - AC-8 → T5 单测（三态渲染与 href）+ 集成回归（4 入口共用 4 次请求）。
+  - AC-8 → T5 单测（详情区三态互斥：替换语义 + 右箭头文案 + href；`LiveBadge` `offlineNode` 三态；`RecordingEntry` 不自订阅）+ 集成回归（HeroWall 4 个「未开播」+ 详情区 4 个录播入口，仍为 4 次请求）。
   - AC-9 → T6 门禁全绿。
 - 已知留痕（供评审判断）：
   1. `useSearchParams` 按 Next 文档会使「最近 Suspense 边界内」的子树改为客户端渲染，故静态导出的 `out/recordings.html` 中不再包含「历史录播」标题与分组头，需水合后出现（`当前直播` 区块与页面头尾仍在静态 HTML 内）。此为计划 §T4 选定的 Suspense 方案的固有取舍；如评审要求保留该段静态 HTML，可按技术方案 §5 改用 `useEffect` 内读 `window.location.search`。
   2. T2 的 `respectReducedMotion: false` 为超出原产出清单的补充，依据 PRD FR-2「无视减少动效规定、呈现完整动效」，已补入 T2 产出说明。
 - 待人工执行：T6 人工验收清单 4 项（AC-4 吸附手感、AC-1 真实开播跳转、场景 C `?member=` 分享直达、AC-8 首页→录播页联动）。
+
+### 返工 R1 记录（2026-09-25，下游「AI 审核代码」打回）
+
+- 打回点：① 链接文案 ASCII `->` 改右箭头「→」；② 录播入口须**替换**详情区「未开播」文本（同一位置二选一，不得并列展示）。
+- **文档先行**（AGENTS「需求变更先更新文档再改代码」）：PRD v1.0 → v1.1（场景 D / FR-4 / AC-8）、技术方案 v1.1 → v1.2（FR-4 / §6 测试策略）、本计划 v1.1 → v1.2（T5 产出与红测试清单）；均先于代码提交修订。
+- 代码改动：
+  - `live-badge.tsx` 新增 `offlineNode?: ReactNode`：未开播分支渲染 `offlineNode ?? 「未开播」纯文本`。徽章因此成为详情区直播状态的**单一状态出口**（只订阅一次 `useLiveStatus`），结构上杜绝「双行」与「重复订阅」；HeroWall 不传该 prop，AC-3 行为不变。
+  - `recording-entry.tsx` 降为纯展示节点（移除 `useLiveStatus` 订阅与 `"use client"`），文案改「未开播，看录播 →」（U+2192）。
+  - `member-section.tsx` 由「徽章下方并列挂载」改为 `<LiveBadge member={member} offlineNode={<RecordingEntry member={member} />} />`。
+- 测试（先红后绿：红阶段 8 例因预期原因失败，含文案/替换语义/单一订阅/三态互斥）：
+  - `tests/recording-entry.test.tsx`：右箭头文案 + `href` + 「不自订阅」断言。原三态判定职责上移至 `LiveBadge`，对应断言迁至 `live-badge.test.tsx`（`offlineNode` 三态）与 `member-section.test.tsx`（详情区三态互斥），覆盖不减。
+  - `tests/live-badge.test.tsx`：新增 `offlineNode` 替换三态 4 例；保留 AC-3「未开播纯文本不可点击」（HeroWall 侧）回归断言。
+  - `tests/member-section.test.tsx`：改用真实 `LiveBadge`（仅打桩 `useLiveStatus`），新增三态互斥与「详情区仅一次订阅」断言。
+  - `tests/live-status-integration.test.tsx`：由「8 个未开播」改为「HeroWall 4 个未开播 + 详情区 4 个录播入口」，请求仍为 4 次。
+- 回归确认：AC-1~AC-7 全绿未回归；`src/lib/live-status.ts` 未改；`package.json` / `pnpm-lock.yaml` 未动（零新增依赖）。
+- 门禁复跑：`pnpm build` ✅ → `pnpm test` ✅ 264 passed（27 files）→ `pnpm lint` ✅ → `npx tsc --noEmit` ✅。
+- 静态导出复核：`out/index.html` 渲染态为 8 个占位骨架（首屏 4 + 详情区 4，SSR 期 `status` 为 null），与返工前一致，无静态 HTML 回归。

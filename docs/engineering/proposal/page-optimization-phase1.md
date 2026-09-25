@@ -1,6 +1,6 @@
 # 页面优化一期 — 技术方案
 
-- 版本：v1.1（2026-09-25 返工：roomId 经线上接口实测确认，改为静态硬编码方案）
+- 版本：v1.2（2026-09-25 返工 R1：FR-4 口径修订——文案改右箭头「→」；录播入口改为**替换**详情区「未开播」文本，`LiveBadge` 增加 `offlineNode` 作为单一状态出口，`RecordingEntry` 降为纯展示节点；同步 §6 测试策略。此前 v1.1 为 roomId 静态硬编码方案）
 - 日期：2026-09-25
 - 状态：待评审
 
@@ -48,12 +48,14 @@
 
 接口约定：query param 键为 `member`，值为 `Member["id"]`（如 `viridis` / `komichi` / `chu2u` / `sumire`）。
 
-### FR-4 未开播录播入口
+### FR-4 未开播录播入口（替换详情区「未开播」文本）
 
 涉及文件：
 
-- 新增 `src/components/recording-entry.tsx`（Client 孤岛，与 `LiveBadge` 同构）：复用 `useLiveStatus(member.id)`（模块级缓存保证同一成员页面生命周期内只请求一次，不引入额外请求，`live-status.ts:16-17`）。加载中渲染 `null`；未开播渲染 `<a href="/recordings?member={member.id}">未开播，看录播 -&gt;</a>`；开播渲染 `null`。
-- `src/components/member-section.tsx`：在 `LiveBadge`（:39）附近挂载 `RecordingEntry`。
+- `src/components/live-badge.tsx`：**成为详情区直播状态的单一状态出口**。新增可选 prop `offlineNode`（未开播态的替换渲染）：未开播分支渲染 `offlineNode ?? <span>未开播</span>`——缺省（`HeroWall`）保持 AC-3 原行为，传入时以替换而非并列的方式承接录播入口。加载中骨架、开播徽章两分支不变（AC-1/2/3 不回归）。
+- 新增 `src/components/recording-entry.tsx`（纯展示节点，**不自行订阅直播状态**）：仅渲染 `<a href="/recordings?member={member.id}">未开播，看录播 →</a>`（右箭头 U+2192）。状态判定全部上移至 `LiveBadge`，避免同一位置出现双行与重复订阅。
+- `src/components/member-section.tsx`：`<LiveBadge member={member} offlineNode={<RecordingEntry member={member} />} />`——详情区按状态三选一渲染（未开播→仅入口 / 开播→仅徽章 / 加载中→仅骨架）。
+- 请求口径不变：详情区徽章仍经 `useLiveStatus(member.id)` 读 `live-status.ts:16-17` 的模块级缓存，同一成员页面生命周期内只请求一次；`RecordingEntry` 不新增任何请求。
 - 站内跳转 `/recordings?...` 不以 `#` 开头，`smooth-scroll.tsx:38` 的锚点拦截自然放行，走 Next 客户端导航。
 
 ## 4. 接口设计
@@ -86,8 +88,9 @@
 
 - `tests/members.test.ts`（改）：四位成员均已填写 `roomId` 且为有效数字（防止后续数据回退）。
 - `tests/live-badge.test.tsx`（改）：开播且 `member.roomId` 存在 → `href=https://live.bilibili.com/{roomId}`（AC-1）；构造无 `roomId` 的成员 → 降级 `member.bilibili`（AC-2）；未开播/加载中不可点击（AC-3）。
-- 新增 `tests/recording-entry.test.tsx`：未开播渲染「未开播，看录播 ->」且 `href=/recordings?member={id}`；开播与加载中不渲染（AC-8）。
-- `tests/member-section.test.tsx`（改）：详情区挂载录播入口。
+- `tests/recording-entry.test.tsx`（改）：渲染「未开播，看录播 →」且 `href=/recordings?member={id}`，可读名与可见文案一致且不含 ASCII `->`；断言其不再自行订阅直播状态（状态出口在 `LiveBadge`）。
+- `tests/live-badge.test.tsx`（改）：`offlineNode` 三态替换断言（未开播→渲染替换节点且不出现「未开播」文本；开播→仅徽章；加载中→仅骨架）；保留 HeroWall 侧未开播「未开播」纯文本的 AC-3 回归断言。
+- `tests/member-section.test.tsx`（改）：详情区替换语义——未开播只见录播入口不见「未开播」文本、开播只见徽章不见入口、加载中只见骨架两者皆无；并断言详情区仅一次 `useLiveStatus` 订阅（单一状态出口）。
 - `tests/recordings-section.test.tsx`（改 + 增）：手风琴单展开（AC-5）；展开/收起时 URL 参数写删（AC-6，jsdom 下断言 `window.location.search`）；带 `?member=` 初始渲染自动展开并触发加载、无效参数忽略（AC-7）；`REVEAL_GROUP_EVENT` 联动后 URL 同步。
 - 动效（AC-4）：对 `smooth-scroll.tsx` 做结构断言（lenis/snap 初始化含显式动画配置）+ 全仓库 grep 断言无 `prefers-reduced-motion` 规则；连续动画的实际手感由人工验收。
 - 回归：`pnpm test` 全绿、`pnpm lint` 通过、`pnpm build`（静态导出）通过。

@@ -1,8 +1,5 @@
-"use client";
-
 import Link from "next/link";
 import type { Member } from "@/data/members";
-import { useLiveStatus } from "@/lib/live-status";
 import styles from "./recording-entry.module.css";
 
 export interface RecordingEntryProps {
@@ -10,23 +7,17 @@ export interface RecordingEntryProps {
 }
 
 /**
- * 未开播录播入口（PRD FR-4 · Client 孤岛，仅 `MemberSection` 挂载）。
+ * 未开播录播入口（PRD FR-4 · 返工 R1）：`LiveBadge` 未开播态的**替换**节点，
+ * 在详情区与「未开播」纯文本同一位置二选一、不并列展示。
  *
- * 数据源复用 `useLiveStatus(member.id)` 的模块级缓存：与同页 `LiveBadge`
- * 共享同一次直播状态请求，不引入额外请求（PRD §5）。
- * 三态：加载中不渲染（避免状态闪烁）、开播不渲染、未开播渲染一行站内文本链接
- * `/recordings?member={id}`（与录播页 FR-3 的 query param 约定一致，AC-8）。
+ * 纯展示节点——直播状态由 `LiveBadge`（详情区单一状态出口）统一读取，
+ * 本组件不订阅状态，避免同一位置出现双行与重复订阅；因此也不存在额外请求（PRD §5）。
+ * 文案右箭头「→」（U+2192），`href` 与录播页 FR-3 的 `?member=` 约定一致（AC-8）。
  */
 export function RecordingEntry({ member }: RecordingEntryProps) {
-  const { status } = useLiveStatus(member.id);
-
-  if (status === null || status.living) {
-    return null;
-  }
-
   return (
     <Link className={styles.entry} href={`/recordings?member=${member.id}`}>
-      {"未开播，看录播 ->"}
+      {"未开播，看录播 →"}
     </Link>
   );
 }
