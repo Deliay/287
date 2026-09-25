@@ -7,7 +7,7 @@
 ## 1. 对应上游文档
 
 - 需求：[docs/product/requirement/2026-09-25-recordings-optimization-phase1.md](../../product/requirement/2026-09-25-recordings-optimization-phase1.md)
-- 设计：`docs/product/design/2026-09-25-recordings-optimization-phase1.md`（同名主题，UI/UX 阶段产物，待下游节点建立；本方案中的布局/配色要点以需求文档 §3 为准，设计稿建立后如有出入以设计稿为准并回本方案勘误）
+- 设计：[docs/product/design/2026-09-25-recordings-optimization-phase1.md](../../product/design/2026-09-25-recordings-optimization-phase1.md)（同名主题，UI/UX 阶段产物，2026-09-25 已由下游节点补建；内容取自需求 §3 与本方案 §3.2 已评审口径，经逐条核对与本方案无出入。布局/配色细节以设计稿为准，如有出入以设计稿为准并回本方案勘误）
 - 基线：[录播模块技术方案](./2026-09-23-recordings-module.md)（已实现的播放器、seek、弹幕窗口化加载均沿用，不改动）
 
 ## 2. 技术选型

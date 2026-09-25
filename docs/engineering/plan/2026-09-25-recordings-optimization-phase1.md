@@ -4,7 +4,7 @@
 - 创建日期：2026-09-25
 - 对应技术方案：[docs/engineering/proposal/2026-09-25-recordings-optimization-phase1.md](../proposal/2026-09-25-recordings-optimization-phase1.md)
 - 对应需求：[docs/product/requirement/2026-09-25-recordings-optimization-phase1.md](../../product/requirement/2026-09-25-recordings-optimization-phase1.md)
-- 对应设计：`docs/product/design/2026-09-25-recordings-optimization-phase1.md`（UI/UX 阶段产物，尚未建立；布局/配色以需求 §3 为准，见技术方案 §1 口径，设计稿建立后如有出入以设计稿为准并回本计划勘误）
+- 对应设计：[docs/product/design/2026-09-25-recordings-optimization-phase1.md](../../product/design/2026-09-25-recordings-optimization-phase1.md)（UI/UX 阶段产物，2026-09-25 已建立；内容取自需求 §3 与技术方案 §3.2 已评审口径，经逐条核对与技术方案无出入，无需勘误。布局/配色/交互细节以设计稿为准，对应关系：FR-1→设计 §2.1、FR-3→§2.2、FR-4/FR-5→§2.3、FR-6→§2.4、FR-2→§2.5）
 - 状态：待评审
 
 > 前置状态：产品需求与技术方案已提交至需求总分支 `feat/recordings-optimization-phase1`（PR #10，人工评审通过）；本计划以技术方案评审通过为执行前提。
@@ -166,3 +166,7 @@ T9（全量验收）← 全部前置任务
 | 评审人 | 日期 | 结论 | 备注 |
 |--------|------|------|------|
 | （待评审） | | | |
+
+## 6. 返工留痕
+
+- **第一轮下游打回（2026-09-25 · 「未见design文档」）**：下游节点反馈缺 UI/UX 设计文档。处理：补建 [docs/product/design/2026-09-25-recordings-optimization-phase1.md](../../product/design/2026-09-25-recordings-optimization-phase1.md)（FR-1~FR-6 布局/配色/交互稿、状态清单、可访问性、覆盖性自查 S1–S6 / AC-1~7），内容严格取自需求 §3 与技术方案 §3.2 已评审口径、无新增冲突决策（与技术方案逐条核对无出入，无需勘误）；本计划与技术方案 §1 的「对应设计」引用同步更新为已建立并给出 FR→设计章节映射。任务拆解（T1–T9）与测试计划不受影响。
