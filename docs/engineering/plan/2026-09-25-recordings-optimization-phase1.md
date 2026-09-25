@@ -51,7 +51,7 @@
 - 对应验收：AC-2、AC-5（图标部分）。
 - 预计：0.5h。
 
-### T3 历史录播「播放/下载」按钮组（FR-2）
+### T3 ✅ 历史录播「播放/下载」按钮组（FR-2）
 
 - 产出：`src/features/recordings/recordings-section.tsx` + `recordings-section.module.css`——`li` 内拆为「标题 `<Link>` 区（点击进回放页，行为不变）+ 右侧按钮组」；主按钮「播放」跳 `recordingReplayHref(linkRoomId, file.name)`，箭头按钮切换下拉菜单（含「下载」项）；「下载」为 `<a href={recordingFileUrl(linkRoomId, file.name)} download={file.name}>`（直链 FLV，前端触发，不经本站中转）；下拉本地 state 开合，点击外部 / Esc 关闭（简单焦点管理，不引库）；`linkRoomId` 漂移口径（审核次要6）沿用。
 - **测试用例（红）**（`tests/recordings-section.test.tsx` 补充）：
@@ -63,7 +63,7 @@
 - 对应验收：AC-2。
 - 预计：2h。
 
-### T4 全屏退出修复（FR-4）
+### T4 ✅ 全屏退出修复（FR-4）
 
 - 产出：`src/features/recordings/replay/replay-stage.tsx`——`handleFullscreen` 补退出分支（`document.fullscreenElement` 存在时 `exitFullscreen()`，否则 `requestFullscreen()`）；新增 `isFullscreen` state + `fullscreenchange` 监听（挂载注册、卸载移除），同步按钮图标 / `aria-label` / `aria-pressed`，覆盖 Esc 原生退出后状态回正。`replay-stage.module.css`：`:fullscreen` 基础样式骨架（细化并入 T5）。
 - **测试用例（红）**（`tests/recordings-replay-stage.test.tsx` 补充，mock Fullscreen API）：
@@ -73,7 +73,7 @@
 - 对应验收：AC-4。
 - 预计：1h。
 
-### T5 控件浮层化（FR-1）
+### T5 ✅ 控件浮层化（FR-1）
 
 - 产出：`replay-stage.tsx`——`.controls` 移入 `.videoArea`（`position: relative` 容器）内部，`position: absolute; inset-inline: 0; bottom: 0` 覆盖于视频底部；进度条贴浮层顶缘、其余控件一行。`replay-stage.module.css`——浮层渐变背景 `linear-gradient(transparent, rgba(0,0,0,.7))`；显隐复用现有「静止 3s 隐藏」opacity 切换（`controlsIdle`），补暂停时常显；`:fullscreen` 全屏时 videoArea 撑满、浮层贴底；移动端浮层内控件可触达、不超出画面。**纯结构调整 + CSS，播放器 / seek / 弹幕浮层逻辑零改动**。
 - **测试用例（红）**：
@@ -83,7 +83,7 @@
 - 对应验收：AC-1。
 - 预计：2h。
 
-### T6 进度条 hover 时间预览（FR-3）
+### T6 ✅ 进度条 hover 时间预览（FR-3）
 
 - 产出：`replay-stage.tsx`——`.progressWrap` 监听 `pointermove`（`pointerType === "mouse"` 才启用），按 `offsetX / 宽度 × duration` 计算预览时间，渲染跟随指针 tooltip（复用 `formatOffset`）；`pointerleave` 隐藏；拖动中（`draftTime` 非空）优先显示 draft 值、hover 预览让位。`replay-stage.module.css`：tooltip 绝对定位。不动 seek 提交链路。
 - **测试用例（红）**：
@@ -93,7 +93,7 @@
 - 对应验收：AC-3。
 - 预计：1.5h。
 
-### T7 网页全屏 theater 模式（FR-5）
+### T7 ✅ 网页全屏 theater 模式（FR-5）
 
 - 产出：`replay-stage.tsx`——新增 `isTheaterMode` state 与控件按钮（`IconTheater`、`aria-pressed`）；开启时舞台切换 `position: fixed; inset: 0` 覆盖层（z-index 高于页头），flex-row：左侧 `.videoColumn`（flex 1，`.videoArea` flex 居中 + `aspect-ratio: 16/9` + `max-width/max-height` 约束实现「画面居中、尽可能大」，非顶对齐），右侧 `.timeline`（固定宽 320–360px、全高滚动）；控件浮层形态不变（FR-1）。互斥：`fullscreenchange` 进入浏览器全屏即退出 theater 并记住、退出后恢复（单一事实源 `document.fullscreenElement`）；theater 开启时全屏按钮仍可用（进入即暂退 theater）。移动端（`< 48em`）不渲染 theater 按钮（与移动端隐藏音量滑杆同法）。`replay-stage.module.css`：theater 布局与断点。
 - **测试用例（红）**：
@@ -105,7 +105,7 @@
 - 对应验收：AC-5。
 - 预计：2.5h。
 
-### T8 事件列表信息流化（FR-6）
+### T8 ✅ 事件列表信息流化（FR-6）
 
 - 产出：
   1. 新增 `src/features/recordings/replay/event-feed.tsx`（导出 `EventFeedItem`，props 契约见技术方案 §4.2）+ `event-feed.module.css`。按 `event.type` 分派：
@@ -124,7 +124,7 @@
 - 对应验收：AC-6。
 - 预计：3h。
 
-### T9 全量回归与验收（AC-7）
+### T9 ✅ 全量回归与验收（AC-7）
 
 - 产出：无功能代码；执行 `pnpm test`、`pnpm lint`、`pnpm build` 全绿；对照需求 §4 执行人工验收清单（见 §4）；如发现回归，按红-绿流程补回归用例后修复。
 - **测试**：全量既有用例（23 文件）+ T1–T8 新增用例全绿；重点回归面：seek/看门狗系列、R15 跨窗 seek、窗口化渲染、悬浮听直播（本期不动但同仓）。
@@ -170,3 +170,15 @@ T9（全量验收）← 全部前置任务
 ## 6. 返工留痕
 
 - **第一轮下游打回（2026-09-25 · 「未见design文档」）**：下游节点反馈缺 UI/UX 设计文档。处理：补建 [docs/product/design/2026-09-25-recordings-optimization-phase1.md](../../product/design/2026-09-25-recordings-optimization-phase1.md)（FR-1~FR-6 布局/配色/交互稿、状态清单、可访问性、覆盖性自查 S1–S6 / AC-1~7），内容严格取自需求 §3 与技术方案 §3.2 已评审口径、无新增冲突决策（与技术方案逐条核对无出入，无需勘误）；本计划与技术方案 §1 的「对应设计」引用同步更新为已建立并给出 FR→设计章节映射。任务拆解（T1–T9）与测试计划不受影响。
+
+## 7. 实现进度与偏差记录（2026-09-25 · 代码实现节点）
+
+- **进度**：T1–T8 全部完成并勾选；T9 自动化部分完成——`pnpm test`（28 文件 / 273 通过 / 1 跳过）、`pnpm lint`（0 problems）、`pnpm build`（含 TypeScript 检查）全绿。
+- **待人工项**：需求 §4 人工验收环境项（亮/暗画面下浮层可辨性、跨源 FLV 真实下载、theater 手感、SC/舰长卡片真实数据观感、移动端模拟器触达）仍需人工执行。
+- **偏差与留痕**（均为实现口径细化，不改动已评审的需求/技术方案结论）：
+  1. **新增 `tests/icons.test.tsx`**（T2 图标渲染口径独立成文件），已回写技术方案 §3.1 测试清单。
+  2. **T7 移动端入口**：按设计 §2.3「按钮 CSS 隐藏，同移动端隐藏音量滑杆做法」实现，用例改为**媒体查询 CSS 源断言**（原计划文字「不渲染」的口径细化为「移动端断点不出现」，与设计稿一致，设计稿优先）。
+  3. **T8 跟随滚动定位源**：`TimelineEntry` 改为持有 `LiveEvent` 并由 `EventFeedItem` 渲染整条（button 含时间戳/高亮/seek）后，自动跟随由 `[data-index="{i}"]` 改为 `[data-current="true"]` 定位——两者在 `currentIndex >= 0` 时等价，行为不变；`entryLabel` 与 `.entry*` 样式按计划删除，样式迁移至 `event-feed.module.css`。
+  4. **T8 R8 用例**：已按计划由 entryLabel 拍平文本断言改写为信息流断言（SC 内联配色 / 礼物 / 舰长卡片 / 时间戳保留 / 拍平前缀不再出现）。
+  5. **T5 结构迁移**：控件移入 `.videoArea` 后，原 `supported !== false` 包裹在该分支内恒为真（TS 已收窄为 `true | null`）→ 移除冗余包裹；暂停常显除派生 `controlsHidden` 外，暂停路径同步重置 `controlsIdle`，保证恢复播放不残留隐藏态。
+  6. **T4 图标**：切换态图标按计划要求「同步按钮图标」新增 `IconFullscreenExit`（与 T2 的 `IconDownload`/`IconTheater` 同描边口径，SVG 断言在 T4 用例覆盖）。

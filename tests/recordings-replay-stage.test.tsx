@@ -20,6 +20,7 @@ import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
 import styles from "@/features/recordings/replay/replay-stage.module.css";
+import feedStyles from "@/features/recordings/replay/event-feed.module.css";
 import { GLYPH_RE, renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
@@ -132,8 +133,10 @@ function stubFullscreenApi(): FullscreenApiMock {
   let element: Element | null = null;
 
   const dispatch = () => document.dispatchEvent(new Event("fullscreenchange"));
-  const requestFullscreen = vi.fn(function (this: Element) {
-    element = this;
+  // 受测组件只会对回放舞台容器（video-column）发起全屏，按该事实源记录全屏元素，
+  // 避免 `function(this)` 别名（@typescript-eslint/no-this-alias）
+  const requestFullscreen = vi.fn(() => {
+    element = document.querySelector('[data-testid="video-column"]');
     dispatch();
     return Promise.resolve();
   });
@@ -1087,8 +1090,8 @@ describe("第七轮审核返工：R9（startReplay 失败语义区分 + 过期�
   });
 });
 
-describe("R8 收尾：需求字面行为断言补全", () => {
-  it("FR-5 事件列表展示 SC / 礼物 / 舰长类型徽标（entryLabel，设计 §2.5）", async () => {
+describe("R8 收尾：事件列表信息流（T8 改写 · FR-6 / AC-6 · 原 entryLabel 拍平文本用例退役）", () => {
+  it("事件列表按信息流渲染 SC / 礼物 / 舰长卡片，保留时间戳与 seek", async () => {
     const events: LiveEvent[] = [
       {
         eventId: "sc-1",
@@ -1096,33 +1099,52 @@ describe("R8 收尾：需求字面行为断言补全", () => {
         occurredAt: new Date(START_MS + 10_000).toISOString(),
         sender: { uid: 1, name: "打赏者", face: "", medal: null, guardLevel: null },
         content: "加油",
+        price: 50,
+        scColors: { backgroundStart: "#7a5b12", backgroundEnd: "#463309", fontColor: "#ffe6a6" },
       },
       {
         eventId: "gift-1",
         type: "gift",
         occurredAt: new Date(START_MS + 20_000).toISOString(),
         sender: { uid: 2, name: "送礼者", face: "", medal: null, guardLevel: null },
-        content: "小花花",
+        price: 0.1,
+        gift: { name: "人气票", count: 1, iconUrl: "https://example.invalid/gift.png" },
       },
       {
         eventId: "guard-1",
         type: "guard_buy",
         occurredAt: new Date(START_MS + 30_000).toISOString(),
-        sender: { uid: 3, name: "上舰者", face: "", medal: null, guardLevel: null },
-        content: "开通舰长",
+        sender: { uid: 3, name: "上舰者", face: "", medal: null, guardLevel: 3 },
+        price: 198,
+        guard: { level: 3, name: "舰长", count: 1 },
       },
     ];
     const deps = makeDeps({ fetchEvents: () => Promise.resolve({ total: 3, items: events }) });
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /SC 打赏者/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /打赏者/ })).toBeInTheDocument());
     const list = screen.getByTestId("event-list");
-    expect(within(list).getByRole("button", { name: /礼物 送礼者/ })).toBeInTheDocument();
-    expect(within(list).getByRole("button", { name: /舰长 上舰者/ })).toBeInTheDocument();
-    // 类型徽标为条目文本前缀，可被读屏/正则命中
-    expect(list.textContent).toContain("SC 打赏者：加油");
-    expect(list.textContent).toContain("礼物 送礼者：小花花");
-    expect(list.textContent).toContain("舰长 上舰者：开通舰长");
+
+    const sc = within(list).getByRole("button", { name: /打赏者/ });
+    expect(sc.textContent).toContain("00:10"); // 时间戳保留
+    expect(sc.textContent).toContain("加油");
+    expect(sc.textContent).toContain("¥50.00");
+    const scCard = sc.querySelector(`.${feedStyles.scCard}`) as HTMLElement;
+    expect(scCard).not.toBeNull();
+    // scColors 内联渐变（jsdom 将 #RRGGBB 规范化为 rgb()）
+    expect(scCard.style.backgroundImage).toMatch(/#7a5b12|rgb\(\s*122,\s*91,\s*18\s*\)/i);
+
+    const gift = within(list).getByRole("button", { name: /送礼者/ });
+    expect(gift.textContent).toContain("人气票 ×1");
+    expect(gift.textContent).toContain("¥0.10");
+
+    const guard = within(list).getByRole("button", { name: /上舰者/ });
+    expect(guard.textContent).toContain("开通了 舰长 ×1");
+    expect(guard.textContent).toContain("¥198.00");
+
+    // 拍平前缀（entryLabel）不再出现——信息流替代纯文本
+    expect(list.textContent).not.toContain("SC 打赏者：加油");
+    expect(list.textContent).not.toContain("礼物 送礼者：");
   });
 });
 

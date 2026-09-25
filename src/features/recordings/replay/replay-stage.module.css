@@ -358,46 +358,7 @@
   padding: var(--mantine-spacing-xs);
 }
 
-.entry,
-.entryCurrent {
-  display: flex;
-  align-items: baseline;
-  gap: var(--mantine-spacing-xs);
-  width: 100%;
-  text-align: left;
-  border: none;
-  border-bottom: 1px solid var(--mantine-color-night287-7);
-  background: transparent;
-  color: var(--mantine-color-night287-2);
-  padding: 8px;
-  cursor: pointer;
-  font-size: var(--mantine-font-size-sm);
-}
-
-.entry:hover {
-  background: var(--mantine-color-night287-7);
-  color: var(--mantine-color-night287-0);
-}
-
-.entryCurrent {
-  background: color-mix(in srgb, var(--mantine-color-night287-6) 35%, transparent);
-  color: var(--mantine-color-night287-0);
-  box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
-}
-
-.entryTime {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-  color: var(--mantine-color-night287-4);
-  font-size: var(--mantine-font-size-xs);
-}
-
-.entryText {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 事件条目样式已迁移至 ./event-feed.module.css（FR-6 信息流化，T8） */
 
 .listState {
   padding: var(--mantine-spacing-md);

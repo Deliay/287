@@ -24,11 +24,12 @@ import {
 } from "@/components/icons";
 import { members } from "@/data/members";
 import { fetchRoomRecordings, recordingFileUrl } from "../api";
-import type { RecordingFile } from "../types";
+import type { LiveEvent, RecordingFile } from "../types";
 import { formatDateTime, formatOffset } from "../format";
 import {
   DanmakuOverlay,
 } from "./danmaku-overlay";
+import { EventFeedItem } from "./event-feed";
 import { useReplayEvents, type FetchEvents } from "./replay-events";
 import { segmentBoundsForFile, windowIndexFor, type SegmentBounds, offsetMsFor } from "./replay-windows";
 import {
@@ -92,25 +93,13 @@ export interface ReplayStageProps {
   deps?: ReplayStageDeps;
 }
 
+/**
+ * 事件列表条目（FR-6 重构）：不再拍平成 `{sender, content}` 纯文本——
+ * 直接持有 `LiveEvent` 结构化数据，由 `EventFeedItem` 按类型分派渲染（技术方案 §4.2）。
+ */
 interface TimelineEntry {
-  eventId: string;
-  type: string;
-  occurredAt: string;
+  event: LiveEvent;
   offsetSeconds: number;
-  sender: string;
-  content: string;
-}
-
-function entryLabel(entry: TimelineEntry): string {
-  const type =
-    entry.type === "super_chat"
-      ? "SC "
-      : entry.type === "gift"
-        ? "礼物 "
-        : entry.type === "guard_buy"
-          ? "舰长 "
-          : "";
-  return `${type}${entry.sender}：${entry.content}`;
 }
 
 /**
@@ -231,14 +220,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     for (const event of windowedEvents) {
       const offset = offsetMsFor(event.occurredAt, recordStartMs);
       if (!Number.isFinite(offset)) continue;
-      mapped.push({
-        eventId: event.eventId,
-        type: event.type,
-        occurredAt: event.occurredAt,
-        offsetSeconds: offset / 1000,
-        sender: event.sender.name,
-        content: event.content ?? (event.type === "danmaku" ? "" : event.type),
-      });
+      mapped.push({ event, offsetSeconds: offset / 1000 });
     }
     mapped.sort((a, b) => a.offsetSeconds - b.offsetSeconds);
     return mapped;
@@ -482,7 +464,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   useEffect(() => {
     if (!following || currentIndex < 0) return;
     const container = listRef.current;
-    const target = container?.querySelector<HTMLElement>(`[data-index="${currentIndex}"]`);
+    const target = container?.querySelector<HTMLElement>('[data-current="true"]');
     if (!container || !target) return;
     programmaticScrollRef.current = true;
     container.scrollTop = Math.max(0, target.offsetTop - container.clientHeight / 2);
@@ -782,187 +764,185 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 </div>
               )}
 
-              {supported !== false && (
-                <div
-                  className={controlsHidden ? styles.controlsHidden : styles.controls}
-                  data-controls={controlsHidden ? "hidden" : "visible"}
-                  onMouseMove={revealControls}
-                  role="group"
-                  aria-label="播放控件"
-                >
-                  <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlay}>
-                    {playing ? <IconPause /> : <IconPlay />}
-                  </button>
+            <div
+              className={controlsHidden ? styles.controlsHidden : styles.controls}
+              data-controls={controlsHidden ? "hidden" : "visible"}
+              onMouseMove={revealControls}
+              role="group"
+              aria-label="播放控件"
+            >
+              <button type="button" aria-label={playing ? "暂停" : "播放"} onClick={togglePlay}>
+                {playing ? <IconPause /> : <IconPlay />}
+              </button>
 
-                  <div
-                    className={styles.progressWrap}
-                    onPointerMove={handleProgressPointerMove}
-                    onPointerLeave={() => setHoverPreview(null)}
-                  >
-                    {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
-                    <div className={styles.progressTrack} aria-hidden="true">
-                      <div data-testid="buffered-bar" className={styles.bufferedBar}>
-                        {bufferedRanges.map(([start, end]) => (
-                          <div
-                            key={`${start}-${end}`}
-                            data-testid="buffered-segment"
-                            className={styles.buffered}
-                            style={{
-                              left: duration > 0 ? `${Math.min(100, (start / duration) * 100)}%` : "0%",
-                              width:
-                                duration > 0
-                                  ? `${Math.min(100, (Math.max(0, end - start) / duration) * 100)}%`
-                                  : "0%",
-                            }}
-                          />
-                        ))}
-                      </div>
+              <div
+                className={styles.progressWrap}
+                onPointerMove={handleProgressPointerMove}
+                onPointerLeave={() => setHoverPreview(null)}
+              >
+                {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
+                <div className={styles.progressTrack} aria-hidden="true">
+                  <div data-testid="buffered-bar" className={styles.bufferedBar}>
+                    {bufferedRanges.map(([start, end]) => (
                       <div
-                        className={styles.played}
-                        data-testid="played-bar"
+                        key={`${start}-${end}`}
+                        data-testid="buffered-segment"
+                        className={styles.buffered}
                         style={{
-                          width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
-                          backgroundColor: member
-                            ? `var(--mantine-color-${member.colorKey}-6)`
-                            : "var(--mantine-color-night287-4)",
+                          left: duration > 0 ? `${Math.min(100, (start / duration) * 100)}%` : "0%",
+                          width:
+                            duration > 0
+                              ? `${Math.min(100, (Math.max(0, end - start) / duration) * 100)}%`
+                              : "0%",
                         }}
                       />
-                    </div>
-                    <input
-                      type="range"
-                      aria-label="播放进度"
-                      min={0}
-                      max={duration > 0 ? duration : 0}
-                      step={0.1}
-                      value={Math.min(
-                        draftTime ?? currentTime,
-                        duration > 0 ? duration : currentTime,
-                      )}
-                      disabled={seeking || duration <= 0}
-                      style={{
-                        accentColor: member
-                          ? `var(--mantine-color-${member.colorKey}-6)`
-                          : "var(--mantine-color-night287-4)",
-                      }}
-                      // 拖动中仅更新预览；松开（pointer/mouse/touch）或键盘抬起才提交 seek（审核 P3-a）
-                      onChange={(event) => {
-                        const next = Number(event.target.value);
-                        draftRef.current = next;
-                        setDraftTime(next);
-                      }}
-                      onPointerUp={commitDraft}
-                      onMouseUp={commitDraft}
-                      onTouchEnd={commitDraft}
-                      onKeyUp={(event) => {
-                        if (
-                          [
-                            "ArrowLeft",
-                            "ArrowRight",
-                            "ArrowUp",
-                            "ArrowDown",
-                            "Home",
-                            "End",
-                            "PageUp",
-                            "PageDown",
-                          ].includes(event.key)
-                        ) {
-                          commitDraft();
-                        }
-                      }}
-                    />
-                    {preview !== null && (
-                      <span
-                        className={styles.progressPreview}
-                        data-testid="progress-preview"
-                        aria-hidden="true"
-                        style={{ left: `${preview.ratio * 100}%` }}
-                      >
-                        {formatOffset(preview.time)}
-                      </span>
-                    )}
-                  </div>
-                  <span className={styles.time} aria-label="播放时间">
-                    {formatOffset(currentTime)} / {formatOffset(duration)}
-                  </span>
-
-                  <label className={styles.volume}>
-                    <span aria-hidden="true">
-                      <IconVolume />
-                    </span>
-                    <input
-                      type="range"
-                      aria-label="音量"
-                      min={0}
-                      max={1}
-                      step={0.1}
-                      value={volume}
-                      onChange={(event) => {
-                        const next = Number(event.target.value);
-                        setVolume(next);
-                        if (next > 0) setMuted(false);
-                        if (videoRef.current) videoRef.current.volume = next;
-                      }}
-                    />
-                  </label>
-                  {/* 移动端仅静音切换（设计 §2.5，次要7）：CSS 控制滑杆/按钮的显隐 */}
-                  <button
-                    type="button"
-                    className={styles.muteButton}
-                    aria-label={muted ? "取消静音" : "静音"}
-                    onClick={() => {
-                      if (muted) {
-                        const restored = volumeBeforeMuteRef.current;
-                        setVolume(restored);
-                        setMuted(false);
-                        if (videoRef.current) videoRef.current.volume = restored;
-                      } else {
-                        volumeBeforeMuteRef.current = volume;
-                        setVolume(0);
-                        setMuted(true);
-                        if (videoRef.current) videoRef.current.volume = 0;
-                      }
-                    }}
-                  >
-                    {muted ? <IconVolumeMute /> : <IconVolume />}
-                  </button>
-
-                  <select aria-label="倍速" value={rate} onChange={handleRateChange}>
-                    {PLAYBACK_RATES.map((value) => (
-                      <option key={value} value={value}>
-                        {value}×
-                      </option>
                     ))}
-                  </select>
-
-                  <button
-                    type="button"
-                    className={styles.theaterButton}
-                    aria-label="网页全屏"
-                    aria-pressed={isTheaterMode}
-                    onClick={() => applyTheater(!isTheaterMode)}
-                  >
-                    <IconTheater />
-                  </button>
-
-                  <button
-                    type="button"
-                    aria-label={isFullscreen ? "退出全屏" : "全屏"}
-                    aria-pressed={isFullscreen}
-                    onClick={handleFullscreen}
-                  >
-                    {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
-                  </button>
-
-                  <button
-                    type="button"
-                    aria-label="弹幕开关"
-                    aria-pressed={danmakuEnabled}
-                    onClick={() => setDanmakuEnabled((value) => !value)}
-                  >
-                    弹幕{danmakuEnabled ? "开" : "关"}
-                  </button>
+                  </div>
+                  <div
+                    className={styles.played}
+                    data-testid="played-bar"
+                    style={{
+                      width: duration > 0 ? `${Math.min(100, (currentTime / duration) * 100)}%` : "0%",
+                      backgroundColor: member
+                        ? `var(--mantine-color-${member.colorKey}-6)`
+                        : "var(--mantine-color-night287-4)",
+                    }}
+                  />
                 </div>
-              )}
+                <input
+                  type="range"
+                  aria-label="播放进度"
+                  min={0}
+                  max={duration > 0 ? duration : 0}
+                  step={0.1}
+                  value={Math.min(
+                    draftTime ?? currentTime,
+                    duration > 0 ? duration : currentTime,
+                  )}
+                  disabled={seeking || duration <= 0}
+                  style={{
+                    accentColor: member
+                      ? `var(--mantine-color-${member.colorKey}-6)`
+                      : "var(--mantine-color-night287-4)",
+                  }}
+                  // 拖动中仅更新预览；松开（pointer/mouse/touch）或键盘抬起才提交 seek（审核 P3-a）
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    draftRef.current = next;
+                    setDraftTime(next);
+                  }}
+                  onPointerUp={commitDraft}
+                  onMouseUp={commitDraft}
+                  onTouchEnd={commitDraft}
+                  onKeyUp={(event) => {
+                    if (
+                      [
+                        "ArrowLeft",
+                        "ArrowRight",
+                        "ArrowUp",
+                        "ArrowDown",
+                        "Home",
+                        "End",
+                        "PageUp",
+                        "PageDown",
+                      ].includes(event.key)
+                    ) {
+                      commitDraft();
+                    }
+                  }}
+                />
+                {preview !== null && (
+                  <span
+                    className={styles.progressPreview}
+                    data-testid="progress-preview"
+                    aria-hidden="true"
+                    style={{ left: `${preview.ratio * 100}%` }}
+                  >
+                    {formatOffset(preview.time)}
+                  </span>
+                )}
+              </div>
+              <span className={styles.time} aria-label="播放时间">
+                {formatOffset(currentTime)} / {formatOffset(duration)}
+              </span>
+
+              <label className={styles.volume}>
+                <span aria-hidden="true">
+                  <IconVolume />
+                </span>
+                <input
+                  type="range"
+                  aria-label="音量"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={volume}
+                  onChange={(event) => {
+                    const next = Number(event.target.value);
+                    setVolume(next);
+                    if (next > 0) setMuted(false);
+                    if (videoRef.current) videoRef.current.volume = next;
+                  }}
+                />
+              </label>
+              {/* 移动端仅静音切换（设计 §2.5，次要7）：CSS 控制滑杆/按钮的显隐 */}
+              <button
+                type="button"
+                className={styles.muteButton}
+                aria-label={muted ? "取消静音" : "静音"}
+                onClick={() => {
+                  if (muted) {
+                    const restored = volumeBeforeMuteRef.current;
+                    setVolume(restored);
+                    setMuted(false);
+                    if (videoRef.current) videoRef.current.volume = restored;
+                  } else {
+                    volumeBeforeMuteRef.current = volume;
+                    setVolume(0);
+                    setMuted(true);
+                    if (videoRef.current) videoRef.current.volume = 0;
+                  }
+                }}
+              >
+                {muted ? <IconVolumeMute /> : <IconVolume />}
+              </button>
+
+              <select aria-label="倍速" value={rate} onChange={handleRateChange}>
+                {PLAYBACK_RATES.map((value) => (
+                  <option key={value} value={value}>
+                    {value}×
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                className={styles.theaterButton}
+                aria-label="网页全屏"
+                aria-pressed={isTheaterMode}
+                onClick={() => applyTheater(!isTheaterMode)}
+              >
+                <IconTheater />
+              </button>
+
+              <button
+                type="button"
+                aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                aria-pressed={isFullscreen}
+                onClick={handleFullscreen}
+              >
+                {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
+              </button>
+
+              <button
+                type="button"
+                aria-label="弹幕开关"
+                aria-pressed={danmakuEnabled}
+                onClick={() => setDanmakuEnabled((value) => !value)}
+              >
+                弹幕{danmakuEnabled ? "开" : "关"}
+              </button>
+            </div>
             </div>
           )}
 
@@ -1007,17 +987,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               <p className={styles.listState}>本场直播暂无弹幕事件</p>
             )}
             {entries.map((entry, index) => (
-              <button
-                key={entry.eventId}
-                type="button"
-                data-index={index}
-                data-current={index === currentIndex ? "true" : undefined}
-                className={index === currentIndex ? styles.entryCurrent : styles.entry}
-                onClick={() => seekTo(entry.offsetSeconds)}
-              >
-                <span className={styles.entryTime}>{formatOffset(entry.offsetSeconds)}</span>
-                <span className={styles.entryText}>{entryLabel(entry)}</span>
-              </button>
+              <EventFeedItem
+                key={entry.event.eventId}
+                event={entry.event}
+                offsetSeconds={entry.offsetSeconds}
+                current={index === currentIndex}
+                onSeek={seekTo}
+              />
             ))}
           </div>
         </section>
