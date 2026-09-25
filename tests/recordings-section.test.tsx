@@ -234,6 +234,37 @@ describe("历史录播列表 RecordingsSection（T7 / AC-4）", () => {
     expect(screen.queryByText("暂无录播")).not.toBeInTheDocument();
   });
 
+  it("AC-5 手风琴：展开分组 B 后分组 A 自动收起，全页同时只有一个展开分组", async () => {
+    // 每次调用返回新 Response：Response body 只能消费一次，同一实例无法供两个分组并发读取；
+    // 且不带 info.title，避免污染模块级「最新场次标题」缓存（R14-2② 依赖该缓存为空）
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z")] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderWithTheme(<RecordingsSection items={statusItems} />);
+
+    const headerOf = (id: string) =>
+      screen.getByTestId(`recordings-group-${id}`).querySelector("button") as HTMLElement;
+
+    fireEvent.click(headerOf("viridis"));
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-viridis-list")).toBeInTheDocument(),
+    );
+    expect(headerOf("viridis")).toHaveAttribute("aria-expanded", "true");
+
+    fireEvent.click(headerOf("komichi"));
+    await waitFor(() =>
+      expect(screen.getByTestId("recordings-komichi-list")).toBeInTheDocument(),
+    );
+    expect(headerOf("komichi")).toHaveAttribute("aria-expanded", "true");
+    // 先展开的分组被父级单一状态收起，内容同步隐藏
+    expect(headerOf("viridis")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByTestId("recordings-viridis-list")).not.toBeInTheDocument();
+
+    expect(document.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+  });
+
   it("R4 加载完成后可收起：列表隐藏且 aria-expanded=false，再展开复用数据不重新取数", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({ files: [makeFile("a.flv", "2026-09-23T20:00:00Z", { title: "游玩饥荒" })] }),

@@ -49,11 +49,23 @@ interface MemberGroupProps {
   roomId: number | undefined;
   /** recording-status 就绪状态；未就绪时分组进入「等待状态」而非空态（审核次要9）。 */
   statusKind?: StatusKind;
+  /** 展开态由父级 `expandedMemberId` 持有（受控，AC-5 至多一个分组展开）。 */
+  expanded: boolean;
+  /**
+   * 请求父级置位/收起展开态——分组头点击、触发加载、状态卡片定位共用的
+   * 单一状态出口（AC-5；T4 起该出口同时负责 URL 同步）。
+   */
+  onSetExpanded: (memberId: string, expanded: boolean) => void;
 }
 
 /** 单成员录播分组：折叠态不请求；仅点击分组头或状态卡片定位时触发加载（AC-4 · R14-1 点击前零请求）。 */
-function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
-  const [expanded, setExpanded] = useState(false);
+function MemberGroup({
+  member,
+  roomId,
+  statusKind = "ok",
+  expanded,
+  onSetExpanded,
+}: MemberGroupProps) {
   const [state, setState] = useState<GroupState>({ kind: "idle" });
   const [page, setPage] = useState(1);
   /** 本组数据实际来源的房间号：轮询导致 roomId 漂移时链接仍指向数据来源房间（审核次要6） */
@@ -68,8 +80,9 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
   const load = useCallback(async (options?: { expand?: boolean }) => {
     requestedRef.current = true;
     // 触发加载即视为展开：点击/定位触发后 aria-expanded / 箭头与内容保持一致（审核次要9 · R14-1）；
+    // 展开态统一交父级持有（AC-5 单展开出口）；
     // 状态就绪补跑传 expand:false——静默加载，不得强制展开用户已收起的分组（审核 R15-3）
-    if (options?.expand !== false) setExpanded(true);
+    if (options?.expand !== false) onSetExpanded(member.id, true);
     if (loadedRef.current) return;
     if (inflightRef.current) return;
     setPage(1);
@@ -103,7 +116,7 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
     } finally {
       inflightRef.current = false;
     }
-  }, [roomId, statusKind, member.id]);
+  }, [roomId, statusKind, member.id, onSetExpanded]);
 
   // recording-status 就绪后补跑挂起的加载（审核次要9 / 次要5 错误态恢复）
   useEffect(() => {
@@ -115,21 +128,22 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
     void load({ expand: false });
   }, [statusKind, state.kind, load]);
 
-  // 状态卡片点击定位（设计 §2.3）：展开并加载对应分组；失败态再次定位即重试（审核次要6）
+  // 状态卡片点击定位（设计 §2.3）：经父级统一出口展开并加载对应分组；失败态再次定位即重试（审核次要6）
   useEffect(() => {
     const onReveal = (event: Event) => {
       if (readRevealMemberId(event) !== member.id) return;
-      setExpanded(true);
-      if (state.kind === "idle" || state.kind === "error") void load();
+      onSetExpanded(member.id, true);
+      if (state.kind === "idle" || state.kind === "error") void load({ expand: false });
     };
     window.addEventListener(REVEAL_GROUP_EVENT, onReveal);
     return () => window.removeEventListener(REVEAL_GROUP_EVENT, onReveal);
-  }, [member.id, state.kind, load]);
+  }, [member.id, state.kind, load, onSetExpanded]);
 
   const toggle = () => {
     const next = !expanded;
-    setExpanded(next);
-    if (next && state.kind === "idle") void load();
+    onSetExpanded(member.id, next);
+    // 首次展开触发取数；其余状态分别由「状态就绪补跑」effect 与「重试」按钮接管
+    if (next && state.kind === "idle") void load({ expand: false });
   };
 
   const files = state.kind === "ok" ? state.files : [];
@@ -269,8 +283,22 @@ interface RecordingsSectionProps {
 /**
  * 历史录播列表（FR-4 / 设计文档 §2.4）：按成员分组、默认收起且仅显式展开时加载
  * （R14-1 点击前零请求）、`startedAt` 倒序、每页 20 条分页；条目跳转站内回放页。
+ *
+ * 展开态上移为单一 `expandedMemberId`（PRD FR-3）：任一时刻至多一个分组展开，
+ * 分组头点击 / 触发加载 / 状态卡片定位三条路径共用同一状态出口。
  */
 export function RecordingsSection({ items, statusKind = "ok" }: RecordingsSectionProps) {
+  /** 当前展开的成员 id；null 为全部收起（AC-5 单展开） */
+  const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
+
+  /** 统一状态出口：置位/收起展开态（收起仅当目标就是当前展开项，避免误伤） */
+  const handleSetExpanded = useCallback((memberId: string, expanded: boolean) => {
+    setExpandedMemberId((current) => {
+      if (expanded) return memberId;
+      return current === memberId ? null : current;
+    });
+  }, []);
+
   return (
     <section aria-labelledby="recordings-section-heading" className={styles.section}>
       <h2 id="recordings-section-heading" className={styles.heading}>
@@ -285,6 +313,8 @@ export function RecordingsSection({ items, statusKind = "ok" }: RecordingsSectio
               member={member}
               roomId={item?.roomId ?? member.roomId}
               statusKind={statusKind}
+              expanded={expandedMemberId === member.id}
+              onSetExpanded={handleSetExpanded}
             />
           );
         })}
