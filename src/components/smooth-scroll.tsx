@@ -17,6 +17,16 @@ function sectionCenter(section: HTMLElement): number {
   );
 }
 
+/** 缓出曲线（起步快、收尾稳）：锚点滚动与吸附归位共用，保证全程为连续动画（AC-4） */
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+/** 锚点滚动时长（秒），显式声明以走时长插值而非 lerp 跳变（PRD FR-2） */
+const SCROLL_DURATION = 1;
+/** proximity 吸附归位时长（秒）：比锚点滚动更短，跟手但仍可见（PRD FR-2 · 体验调优值） */
+const SNAP_DURATION = 0.6;
+
 /**
  * 站内锚点拦截：lenis 可用时交给 lenis 平滑滚动；
  * lenis 不存在（移动端/未初始化）或事件已被处理方 preventDefault（如导航回顶）时放行原生行为。
@@ -65,10 +75,20 @@ export function SmoothScroll() {
       return;
     }
 
-    const lenis = new Lenis({ autoRaf: true });
+    const lenis = new Lenis({
+      autoRaf: true,
+      duration: SCROLL_DURATION,
+      easing: easeOutCubic,
+      // PRD FR-2 / AC-4：无视「减少动效」降级，吸附与滚动一律呈现完整动画
+      respectReducedMotion: false,
+    });
     setLenis(lenis);
 
-    const snap = new Snap(lenis, { type: "proximity" });
+    const snap = new Snap(lenis, {
+      type: "proximity",
+      duration: SNAP_DURATION,
+      easing: easeOutCubic,
+    });
     let unsubscribes: Array<() => void> = [];
 
     const registerSnaps = () => {

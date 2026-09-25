@@ -29,7 +29,7 @@ describe("直播状态徽章 LiveBadge", () => {
     expect(skeleton).toHaveClass(styles.badge);
   });
 
-  it("开播时可见文本为「正在直播：{标题}」，渲染为指向成员 B 站主页的新标签页链接（AC-2/AC-3）", () => {
+  it("开播时可见文本为「正在直播：{标题}」，渲染为指向直播间的新标签页链接（AC-1）", () => {
     useLiveStatusMock.mockReturnValue({
       status: { living: true, title: "重生之我是钓鱼大师" },
     });
@@ -37,12 +37,40 @@ describe("直播状态徽章 LiveBadge", () => {
 
     const link = screen.getByRole("link");
     expect(link).toHaveTextContent("正在直播：重生之我是钓鱼大师");
-    expect(link).toHaveAttribute("href", members[0].bilibili);
+    expect(link).toHaveAttribute(
+      "href",
+      `https://live.bilibili.com/${members[0].roomId}`,
+    );
     expect(link).toHaveAttribute("target", "_blank");
     expect(link.getAttribute("rel") ?? "").toContain("noopener");
     expect(link.getAttribute("aria-label") ?? "").toContain("正在直播");
     expect(link.getAttribute("aria-label") ?? "").toContain(
       members[0].romanName,
+    );
+  });
+
+  it("成员缺失 roomId 时开播链接降级为个人主页，不渲染无效直播间地址（AC-2）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    const withoutRoomId = { ...members[1], roomId: undefined };
+    renderWithTheme(<LiveBadge member={withoutRoomId} />);
+
+    const link = screen.getByRole("link");
+    expect(link).toHaveAttribute("href", members[1].bilibili);
+    expect(link.getAttribute("href") ?? "").not.toContain("live.bilibili.com");
+  });
+
+  it("逐成员 liveUrl 覆盖优先于 roomId 推导（逃生口语义不变）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    const overridden = { ...members[2], liveUrl: "https://example.com/live" };
+    renderWithTheme(<LiveBadge member={overridden} />);
+
+    expect(screen.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://example.com/live",
     );
   });
 

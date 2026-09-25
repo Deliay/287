@@ -12,7 +12,12 @@ export interface Member {
   colorKey: "viridis" | "komichi" | "chu2u" | "sumire";
   /** B 站 UID（即接口字段 `mid`）：录播状态/录播列表按 `mid` 与 recording-status 关联（技术方案 §4.3） */
   mid: number;
-  /** 录播房间号兜底：房间归属以 recording-status 的 `mid` 关联为准，仅当接口未返回该成员时使用本字段（可缺省） */
+  /**
+   * 直播间号（技术方案 §4）：
+   * 1) 录播房间号兜底——房间归属以 recording-status 的 `mid` 关联为准，仅当接口未返回该成员时使用本字段；
+   * 2) 直播徽章开播态跳转 `https://live.bilibili.com/{roomId}` 的数据源。
+   * 数据源：2026-09-25 录播服务 recording-status 接口按 mid 关联实测，B 站直播间号长期不变，静态硬编码（可缺省）。
+   */
   roomId?: number;
   /** 立绘路径，如 /images/members/viridis.avif */
   image: string;
@@ -28,8 +33,13 @@ export interface Member {
   bilibili: string;
   /** 直播状态接口路径（需求 §7），如 /api/live/viridis/status；base 由 live-status.ts 按环境拼接 */
   liveStatusUrl: string;
-  /** 直播入口链接（开播时徽章跳转目标，待需求 T1 确认；确认前默认同 bilibili） */
+  /** 直播入口链接：已由 `roomId` 经 `liveRoomUrl()` 推导取代，仅作逐成员特殊覆盖的逃生口（四位成员均不填写） */
   liveUrl?: string;
+}
+
+/** 按 roomId 拼装 B 站直播间地址（集中一处便于测试，技术方案 §4） */
+export function liveRoomUrl(roomId: number): string {
+  return `https://live.bilibili.com/${roomId}`;
 }
 
 export const members: Member[] = [
@@ -42,6 +52,7 @@ export const members: Member[] = [
       "在现实中不太擅长与人交流、常独自上山和花花草草说话的女孩。为了交到朋友、讲述自己喜欢的植物小故事而加入 VirtuaReal。名字取自多肉植物「小松绿」。",
     colorKey: "viridis",
     mid: 1891335475,
+    roomId: 1727071052,
     image: "/images/members/viridis.avif",
     imagePosition: "5% -15%",
     imagePositionDetail: "52% 0%",
@@ -59,6 +70,7 @@ export const members: Member[] = [
       "凌晨四点的十字路口，变戏法般递出手绘传单的少女。黑发紫瞳、红色大围巾与「禁止通行」路牌是她的标志。VR 史上最速千舰纪录保持者。",
     colorKey: "komichi",
     mid: 1512246445,
+    roomId: 1700301235,
     image: "/images/members/komichi.avif",
     imagePosition: "35% 0%",
     imagePositionDetail: "38% 0%",
@@ -76,6 +88,7 @@ export const members: Member[] = [
       "以「外星间谍」身份潜伏地球的少女，白发、天线与机能风外套，身边漂浮着绿色方块小生物。兴趣是占卜，公认烂梗大王。",
     colorKey: "chu2u",
     mid: 2138961136,
+    roomId: 1727074031,
     image: "/images/members/chu2u.avif",
     imagePosition: "5% -15%",
     imagePositionDetail: "50% 1%",
@@ -93,6 +106,7 @@ export const members: Member[] = [
       "喜欢雨水、雾与破旧纸张的小书店店主。浅紫长发与哥特连衣裙，身缠紫色藤蔓，怀抱一本带刺的书，一边看店一边把妹妹拉扯长大。",
     colorKey: "sumire",
     mid: 1150976664,
+    roomId: 1727076670,
     image: "/images/members/sumire.avif",
     imagePosition: "-25% -15%",
     imagePositionDetail: "85% 0%",
