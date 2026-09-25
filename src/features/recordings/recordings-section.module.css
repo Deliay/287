@@ -20,7 +20,8 @@
   background: var(--mantine-color-night287-8);
   border: 1px solid var(--mantine-color-night287-7);
   border-radius: 12px;
-  overflow: hidden;
+  /* 不裁切子元素：条目按钮组的下拉菜单需溢出可见（R14 圆角改由 groupHeader 承担） */
+  overflow: visible;
   scroll-margin-top: calc(var(--site-header-height) + 16px);
 }
 
@@ -33,9 +34,15 @@
   padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
   background: transparent;
   border: none;
+  border-radius: 12px;
   cursor: pointer;
   color: var(--mantine-color-night287-1);
   font-size: var(--mantine-font-size-md);
+}
+
+/* 展开后下接 groupBody：仅保留上圆角，避免 hover 背景漏出底部圆角 */
+.groupHeader[aria-expanded="true"] {
+  border-radius: 12px 12px 0 0;
 }
 
 .groupHeader:hover {
@@ -139,16 +146,111 @@
   border-bottom: none;
 }
 
+.itemRow {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-sm) 0;
+}
+
 .itemLink {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: var(--mantine-spacing-sm) 0;
 }
 
 @media (hover: hover) {
   .itemLink:hover {
     background: var(--mantine-color-night287-7);
+  }
+}
+
+/* 条目右侧「播放 / 下载」按钮组（FR-2 · 设计 §2.5） */
+.actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.playButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mantine-color-night287-0);
+  font-size: var(--mantine-font-size-xs);
+}
+
+.playButton:hover {
+  border-color: var(--mantine-color-night287-4);
+  background: var(--mantine-color-night287-7);
+}
+
+.menuWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.menuToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--mantine-color-night287-1);
+  cursor: pointer;
+}
+
+.menuToggle:hover {
+  border-color: var(--mantine-color-night287-4);
+  color: var(--mantine-color-night287-0);
+}
+
+.menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 120px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--mantine-color-night287-8);
+  border: 1px solid var(--mantine-color-night287-6);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.menuItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  color: var(--mantine-color-night287-0);
+  font-size: var(--mantine-font-size-sm);
+}
+
+.menuItem:hover {
+  background: var(--mantine-color-night287-7);
+}
+
+/* 窄屏：主按钮文字收为图标（aria-label 保留可访问名，设计 §2.5） */
+@media (max-width: 47.99em) {
+  .playButton {
+    padding: 6px;
+  }
+
+  .playLabel {
+    display: none;
   }
 }
 

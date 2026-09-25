@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { IconChevron } from "@/components/icons";
+import { IconChevron, IconDownload, IconPlay } from "@/components/icons";
 import { members, type Member } from "@/data/members";
-import { fetchRoomRecordings, recordingReplayHref } from "./api";
+import { fetchRoomRecordings, recordingFileUrl, recordingReplayHref } from "./api";
 import { setLastTitle } from "./last-title";
 import type { RecordingFile, RecordingStatusItem } from "./types";
 import { formatDateTime, formatDuration, formatFileSize } from "./format";
@@ -244,23 +244,29 @@ function MemberGroup({
                   const durationText = formatDuration(file.info?.startedAt, file.info?.endedAt);
                   return (
                     <li key={file.name} className={styles.item} data-testid="recording-item">
-                      <Link
-                        href={
-                          linkRoomId === undefined
-                            ? "#"
-                            : recordingReplayHref(linkRoomId, file.name)
-                        }
-                        className={styles.itemLink}
-                      >
-                        <span className={styles.itemTitle} data-testid="recording-title">
-                          {recordingTitle(file)}
-                        </span>
-                        <span className={styles.itemMeta}>
-                          {formatDateTime(file.info?.startedAt ?? file.createdAt)}
-                          {durationText ? ` · ${durationText}` : ""}
-                          {file.size > 0 ? ` · ${formatFileSize(file.size)}` : ""}
-                        </span>
-                      </Link>
+                      <div className={styles.itemRow}>
+                        <Link
+                          href={
+                            linkRoomId === undefined
+                              ? "#"
+                              : recordingReplayHref(linkRoomId, file.name)
+                          }
+                          className={styles.itemLink}
+                        >
+                          <span className={styles.itemTitle} data-testid="recording-title">
+                            {recordingTitle(file)}
+                          </span>
+                          <span className={styles.itemMeta}>
+                            {formatDateTime(file.info?.startedAt ?? file.createdAt)}
+                            {durationText ? ` · ${durationText}` : ""}
+                            {file.size > 0 ? ` · ${formatFileSize(file.size)}` : ""}
+                          </span>
+                        </Link>
+                        {/* 右侧按钮组：房间号取数据来源房间（同条目链接，审核次要6） */}
+                        {linkRoomId !== undefined && (
+                          <RecordingActions roomId={linkRoomId} fileName={file.name} />
+                        )}
+                      </div>
                     </li>
                   );
                 })}
@@ -293,6 +299,74 @@ function MemberGroup({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 条目右侧按钮组（FR-2 · 设计 §2.5）：主按钮「播放」跳站内回放页（与条目本体同址），
+ * 箭头按钮切换下拉菜单（含「下载」直链）。下拉本地 state 开合，点击外部 / Esc 关闭
+ * （简单焦点管理，不引库）。
+ */
+function RecordingActions({ roomId, fileName }: { roomId: number; fileName: string }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  /** 下拉开关：Esc 收起后焦点归还于此（设计 §3 可键盘操作）。 */
+  const toggleRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocumentClick = (event: Event) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      toggleRef.current?.focus();
+    };
+    document.addEventListener("click", onDocumentClick);
+    document.addEventListener("keydown", onDocumentKeyDown);
+    return () => {
+      document.removeEventListener("click", onDocumentClick);
+      document.removeEventListener("keydown", onDocumentKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div className={styles.actions} ref={rootRef} data-testid="recording-actions">
+      <Link
+        href={recordingReplayHref(roomId, fileName)}
+        className={styles.playButton}
+        aria-label="播放"
+      >
+        <IconPlay />
+        <span className={styles.playLabel}>播放</span>
+      </Link>
+      <div className={styles.menuWrap}>
+        <button
+          type="button"
+          ref={toggleRef}
+          className={styles.menuToggle}
+          aria-label="更多操作"
+          aria-haspopup="true"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <IconChevron direction={open ? "up" : "down"} />
+        </button>
+        {open && (
+          <div className={styles.menu}>
+            <a
+              href={recordingFileUrl(roomId, fileName)}
+              download={fileName}
+              className={styles.menuItem}
+            >
+              <IconDownload />
+              <span>下载</span>
+            </a>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

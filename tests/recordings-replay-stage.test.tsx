@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { StrictMode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import Page from "@/app/recordings/replay/page";
@@ -17,6 +19,8 @@ import {
 import type { PerformSeekArgs } from "@/features/recordings/replay/seek";
 import { performSeek as realPerformSeek } from "@/features/recordings/replay/seek";
 import { audioRegistry } from "@/features/recordings/live-audio/audio-player-registry";
+import styles from "@/features/recordings/replay/replay-stage.module.css";
+import feedStyles from "@/features/recordings/replay/event-feed.module.css";
 import { GLYPH_RE, renderWithTheme } from "./utils";
 
 const { paramsHolder } = vi.hoisted(() => ({ paramsHolder: { current: "" } }));
@@ -105,6 +109,66 @@ function makeDeps(overrides: Partial<ReplayStageDeps> = {}): ReplayStageDeps {
 
 let restoreLoader: (() => void) | null = null;
 
+/** T4：Fullscreen API mock 的还原钩子（afterEach 统一调用）。 */
+let restoreFullscreen: (() => void) | null = null;
+
+interface FullscreenApiMock {
+  requestFullscreen: ReturnType<typeof vi.fn>;
+  exitFullscreen: ReturnType<typeof vi.fn>;
+  /** 模拟浏览器原生退出（Esc）路径。 */
+  escapeNatively(): void;
+}
+
+/**
+ * mock Fullscreen API（jsdom 无实现）：注入 `Element.prototype.requestFullscreen`、
+ * `document.exitFullscreen` 与 `document.fullscreenElement`，并在 afterEach 还原。
+ * T4（切换/状态回正）与 T7（与网页全屏互斥）共用。
+ */
+function stubFullscreenApi(): FullscreenApiMock {
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  const doc = document as unknown as Record<string, unknown>;
+  const originalRequest = proto.requestFullscreen;
+  const originalExit = doc.exitFullscreen;
+  const originalDescriptor = Object.getOwnPropertyDescriptor(document, "fullscreenElement");
+  let element: Element | null = null;
+
+  const dispatch = () => document.dispatchEvent(new Event("fullscreenchange"));
+  // 受测组件只会对回放舞台容器（video-column）发起全屏，按该事实源记录全屏元素，
+  // 避免 `function(this)` 别名（@typescript-eslint/no-this-alias）
+  const requestFullscreen = vi.fn(() => {
+    element = document.querySelector('[data-testid="video-column"]');
+    dispatch();
+    return Promise.resolve();
+  });
+  const exitFullscreen = vi.fn(() => {
+    element = null;
+    dispatch();
+    return Promise.resolve();
+  });
+  Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+  proto.requestFullscreen = requestFullscreen;
+  doc.exitFullscreen = exitFullscreen;
+
+  restoreFullscreen = () => {
+    if (originalRequest === undefined) delete proto.requestFullscreen;
+    else proto.requestFullscreen = originalRequest;
+    if (originalExit === undefined) delete doc.exitFullscreen;
+    else doc.exitFullscreen = originalExit;
+    if (originalDescriptor) Object.defineProperty(document, "fullscreenElement", originalDescriptor);
+    else delete doc.fullscreenElement;
+    restoreFullscreen = null;
+  };
+
+  return {
+    requestFullscreen,
+    exitFullscreen,
+    escapeNatively() {
+      element = null;
+      dispatch();
+    },
+  };
+}
+
 beforeEach(() => {
   paramsHolder.current = "";
 });
@@ -112,17 +176,359 @@ beforeEach(() => {
 afterEach(() => {
   restoreLoader?.();
   restoreLoader = null;
+  restoreFullscreen?.();
+  restoreFullscreen = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 /** 冲刷微任务（避免依赖 waitFor 的时钟推进） */
+describe("FR-3 进度条 hover 时间预览（T6 / AC-3 · 设计 §2.2）", () => {
+  /** jsdom 无布局：为元素注入几何尺寸，供「位置 → 时间」换算。 */
+  function stubRect(element: HTMLElement, rect: Partial<DOMRect>) {
+    const base: DOMRect = {
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 20,
+      top: 0,
+      right: 400,
+      bottom: 20,
+      left: 0,
+      toJSON: () => ({}),
+    };
+    element.getBoundingClientRect = () => ({ ...base, ...rect } as DOMRect);
+  }
+
+  async function renderWithDuration(durationSeconds = 10_800) {
+    const performSeek = vi.fn(() => Promise.resolve(true));
+    const deps = makeDeps({ performSeek });
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const video = screen.getByLabelText("录播视频") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { value: durationSeconds, configurable: true });
+    fireEvent.timeUpdate(video);
+    await flush();
+
+    const progress = screen.getByRole("slider", { name: "播放进度" });
+    const wrap = progress.parentElement as HTMLElement;
+    stubRect(wrap, { left: 0, width: 400 });
+    return { performSeek, progress, wrap };
+  }
+
+  it("鼠标 pointermove 显示跟随指针的时间预览，数值随位置实时更新", async () => {
+    const { wrap } = await renderWithDuration();
+
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 200 }); // 半程
+    const preview = screen.getByTestId("progress-preview");
+    expect(preview).toHaveTextContent("1:30:00"); // formatOffset(10800 / 2)
+    expect(preview.closest("button, input, [role=slider]")).toBeNull(); // 悬浮预览，非控件本体
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 100 }); // 1/4 处 → 实时更新
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("45:00");
+  });
+
+  it("pointerleave 立即隐藏；touch 指针不显示预览（不影响现有拖动预览）", async () => {
+    const { progress, wrap } = await renderWithDuration();
+
+    fireEvent.pointerMove(wrap, { pointerType: "touch", clientX: 100 });
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 100 });
+    expect(screen.getByTestId("progress-preview")).toBeInTheDocument();
+    fireEvent.pointerLeave(wrap);
+    expect(screen.queryByTestId("progress-preview")).not.toBeInTheDocument();
+
+    // touch 拖动预览（draft）不受影响：仍由 range 值展示
+    fireEvent.change(progress, { target: { value: "60" } });
+    expect((progress as HTMLInputElement).value).toBe("60");
+  });
+
+  it("预览气泡位置夹取：两端按边缘锚定（--preview-ratio 驱动 CSS clamp），中部随指针居中", async () => {
+    const { wrap } = await renderWithDuration();
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 0 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("0");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 400 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("1");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 200 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("0.5");
+
+    // 位置夹取落在 CSS：气泡左右半宽被 clamp 在容器内，不被 .videoArea 的 overflow:hidden 裁切
+    const css = readFileSync(
+      path.join(process.cwd(), "src/features/recordings/replay/replay-stage.module.css"),
+      "utf8",
+    );
+    const previewBody = ruleBody(css, "progressPreview");
+    expect(previewBody).toMatch(/left:\s*clamp\(/);
+    expect(previewBody).toMatch(/var\(--preview-ratio\)/);
+  });
+
+  it("拖动中优先显示 draft 值（与 hover 互斥），松开才提交 seek（P3(a) 不回归）", async () => {
+    const { performSeek, progress, wrap } = await renderWithDuration();
+
+    fireEvent.change(progress, { target: { value: "300" } });
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("05:00");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 396 }); // hover 接近片尾
+    expect(screen.getByTestId("progress-preview")).toHaveTextContent("05:00"); // draft 优先
+
+    expect(performSeek).not.toHaveBeenCalled();
+    fireEvent.pointerUp(progress);
+    await flush();
+    expect(performSeek).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("FR-1 控件浮层化（T5 / AC-1 · 设计 §2.1）", () => {
+  it("控件渲染在画面容器 videoArea 内部（DOM 父子），不再作为其兄弟占画面下方独立空间", async () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const group = screen.getByRole("group", { name: "播放控件" });
+    const videoArea = screen.getByTestId("video-area");
+    expect(group.parentElement).toBe(videoArea);
+    // 画面容器内还承载视频本体（浮层覆盖的是同一盒模型，非并列布局条）
+    expect(videoArea).toContainElement(screen.getByLabelText("录播视频"));
+  });
+
+  it("暂停时控件常显：静止 3s 隐藏后暂停立即可见，恢复播放不立即隐藏", async () => {
+    vi.useFakeTimers();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const group = screen.getByRole("group", { name: "播放控件" });
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    act(() => {
+      vi.advanceTimersByTime(3_000);
+    });
+    expect(group).toHaveAttribute("data-controls", "hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "暂停" }));
+    expect(group).toHaveAttribute("data-controls", "visible");
+
+    fireEvent.click(screen.getByRole("button", { name: "播放" }));
+    expect(group).toHaveAttribute("data-controls", "visible"); // 恢复播放不得沿用暂停前的 idle 态
+  });
+
+  it("浮层 CSS：绝对定位覆盖画面底部 + 渐变遮罩 + 进度条独占浮层顶缘一行", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/features/recordings/replay/replay-stage.module.css"),
+      "utf8",
+    );
+    const controlsBody = ruleBody(css, "controls");
+    expect(controlsBody).toMatch(/position:\s*absolute/);
+    expect(controlsBody).toMatch(/inset-inline:\s*0/);
+    expect(controlsBody).toMatch(/bottom:\s*0/);
+    // 渐变遮罩保证亮色画面上按钮可辨（FR-1 / 设计 §1）
+    expect(controlsBody).toMatch(/linear-gradient\(\s*transparent,\s*rgba\(\s*0\s*,\s*0\s*,\s*0\s*,\s*\.?7\s*\)\s*\)/);
+    expect(controlsBody).not.toMatch(/border:\s*1px solid/); // 不再是独立布局条的描边卡片
+    // 进度条贴浮层顶缘、独占一行（其余控件折行收纳）
+    const progressBody = ruleBody(css, "controls .progressWrap");
+    expect(progressBody).toMatch(/flex:\s*1\s+0\s+100%/);
+  });
+
+  it("浮层形态下控件功能不回归：播放/进度/音量/倍速/弹幕开关/全屏齐备", async () => {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument());
+    const group = screen.getByRole("group", { name: "播放控件" });
+    expect(group).toContainElement(within(group).getByRole("slider", { name: "播放进度" }));
+    expect(group).toContainElement(within(group).getByRole("slider", { name: "音量" }));
+    expect(group).toContainElement(within(group).getByRole("combobox", { name: "倍速" }));
+    expect(group).toContainElement(within(group).getByRole("button", { name: "全屏" }));
+    expect(group).toContainElement(within(group).getByRole("button", { name: /弹幕开关/ }));
+  });
+});
+
+describe("FR-5 网页全屏 theater（T7 / AC-5 · 设计 §2.3）", () => {
+  const CSS_PATH = path.join(
+    process.cwd(),
+    "src/features/recordings/replay/replay-stage.module.css",
+  );
+
+  function layoutElement(): HTMLElement {
+    return document.querySelector(`.${styles.layout}`) as HTMLElement;
+  }
+
+  it("点击「网页全屏」切换 theater 布局 class 与 aria-pressed，再次点击恢复原布局", async () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const button = screen.getByRole("button", { name: "网页全屏" });
+    const layout = layoutElement();
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(layout).not.toHaveClass(styles.theater);
+
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(layout).toHaveAttribute("data-theater", "true");
+    expect(layout).toHaveClass(styles.theater);
+
+    fireEvent.click(button);
+    expect(button).toHaveAttribute("aria-pressed", "false");
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(layout).not.toHaveClass(styles.theater);
+  });
+
+  it("theater 布局 CSS：舞台 fixed 满窗、右列表全高滚动、画面在左容器内居中且保持 16:9（非顶对齐）", () => {
+    const css = readFileSync(CSS_PATH, "utf8");
+
+    const theaterBody = ruleBody(css, "theater");
+    expect(theaterBody).toMatch(/position:\s*fixed/);
+    expect(theaterBody).toMatch(/inset:\s*0/);
+    expect(theaterBody).toMatch(/z-index:\s*(1\d\d|2\d\d|3\d\d)/); // 层级高于页头（z-index:100）
+
+    const columnBody = ruleBody(css, "theater .videoColumn");
+    expect(columnBody).toMatch(/align-items:\s*center/);
+    expect(columnBody).toMatch(/justify-content:\s*center/);
+
+    const areaBody = ruleBody(css, "theater .videoArea");
+    expect(areaBody).toMatch(/aspect-ratio:\s*16\s*\/\s*9/);
+    expect(areaBody).toMatch(/width:\s*min\(/); // 尽可能大且不溢出剩余空间
+    expect(areaBody).toMatch(/margin:\s*auto|align-self:\s*center/); // 居中，非顶对齐
+
+    const timelineBody = ruleBody(css, "theater .timeline");
+    expect(timelineBody).toMatch(/max-height:\s*none/); // 右侧事件列表全高滚动
+  });
+
+  it("与浏览器全屏互斥：进入全屏暂退 theater 并记住，退出后恢复（theater → 全屏 → Esc）", async () => {
+    const api = stubFullscreenApi();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+
+    const layout = layoutElement();
+    const theaterButton = screen.getByRole("button", { name: "网页全屏" });
+    const group = screen.getByRole("group", { name: "播放控件" });
+
+    fireEvent.click(theaterButton);
+    expect(layout).toHaveAttribute("data-theater", "true");
+
+    // 进入浏览器全屏 → theater 暂退（单一事实源 document.fullscreenElement）
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    expect(layout).toHaveAttribute("data-theater", "false");
+    expect(theaterButton).toHaveAttribute("aria-pressed", "false");
+
+    // Esc 退出浏览器全屏 → 恢复进入前状态
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
+    expect(layout).toHaveAttribute("data-theater", "true");
+
+    // 未开启 theater 时进出全屏：退出后不得凭空开启
+    fireEvent.click(theaterButton);
+    expect(layout).toHaveAttribute("data-theater", "false");
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
+    expect(layout).toHaveAttribute("data-theater", "false");
+  });
+
+  it("theater 期间锁定底层页面滚动，退出后恢复（含卸载恢复，避免背景滚动漂移）", async () => {
+    const { unmount } = render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+    const theaterButton = screen.getByRole("button", { name: "网页全屏" });
+
+    expect(document.body.style.overflow).toBe("");
+    fireEvent.click(theaterButton);
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(theaterButton);
+    expect(document.body.style.overflow).toBe("");
+
+    fireEvent.click(theaterButton); // 保持开启直至卸载
+    expect(document.body.style.overflow).toBe("hidden");
+    unmount();
+    expect(document.body.style.overflow).toBe("");
+  });
+
+  it("移动端断点不出现网页全屏入口（按钮 CSS 隐藏，与音量滑杆同口径 · 设计 §2.3）", () => {
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    const button = screen.getByRole("button", { name: "网页全屏" });
+    expect(button).toHaveClass(styles.theaterButton);
+
+    const css = readFileSync(CSS_PATH, "utf8");
+    const mobileRules =
+      css.match(/@media[^{]*max-width:\s*47\.99em[^{]*\{([\s\S]*?)\n\}/)?.[1] ?? "";
+    expect(mobileRules).toMatch(/\.theaterButton\s*\{[^}]*display:\s*none/);
+  });
+});
+
+describe("FR-4 全屏切换修复（T4 / AC-4 · 设计 §2.3）", () => {
+  async function renderStage() {
+    const deps = makeDeps();
+    render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
+    await flush();
+    const group = screen.getByRole("group", { name: "播放控件" });
+    return { group };
+  }
+
+  it("全屏按钮为切换：未全屏点击 requestFullscreen，已全屏点击 exitFullscreen", async () => {
+    const api = stubFullscreenApi();
+    const { group } = await renderStage();
+
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    expect(api.requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(api.exitFullscreen).not.toHaveBeenCalled();
+
+    fireEvent.click(within(group).getByRole("button", { name: "退出全屏" }));
+    expect(api.exitFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("状态同步：进入全屏后图标/aria-pressed 切换；Esc 原生退出后恢复「进入全屏」态", async () => {
+    const api = stubFullscreenApi();
+    const { group } = await renderStage();
+    const button = within(group).getByRole("button", { name: "全屏" });
+    const iconOf = () =>
+      Array.from(button.querySelectorAll("path"))
+        .map((path) => path.getAttribute("d"))
+        .join("|");
+    const expandIcon = iconOf();
+    expect(button).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(button); // 进入全屏（mock 同步派发 fullscreenchange）
+    const exitButton = within(group).getByRole("button", { name: "退出全屏" });
+    expect(exitButton).toHaveAttribute("aria-pressed", "true");
+    expect(iconOf()).not.toBe(expandIcon); // 图标随状态切换（非同一图形）
+    expect(exitButton.querySelector("svg")).not.toBeNull();
+
+    // Esc 等浏览器原生退出路径：状态回正，不残留错误状态
+    act(() => {
+      api.escapeNatively();
+    });
+    await flush();
+    const restored = within(group).getByRole("button", { name: "全屏" });
+    expect(restored).toHaveAttribute("aria-pressed", "false");
+    expect(iconOf()).toBe(expandIcon);
+  });
+
+  it("R14-5 全屏按钮切换后仍为内联 SVG，无 emoji/Unicode 字形", async () => {
+    stubFullscreenApi();
+    const { group } = await renderStage();
+    fireEvent.click(within(group).getByRole("button", { name: "全屏" }));
+    const button = within(group).getByRole("button", { name: "退出全屏" });
+    expect(button.querySelector("svg")).not.toBeNull();
+    expect(GLYPH_RE.test(button.textContent ?? "")).toBe(false);
+  });
+});
+
 async function flush(): Promise<void> {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+/** 从 CSS 源码取出某条规则的声明体（结构断言共用，同 live-badge 用例口径） */
+function ruleBody(css: string, selector: string): string {
+  return css.match(new RegExp(`\\.${selector}\\b[^{}]*\\{([^{}]*)\\}`))?.[1] ?? "";
 }
 
 describe("回放页路由与页头（T13 / AC-5、AC-9 路由）", () => {
@@ -723,8 +1129,8 @@ describe("第七轮审核返工：R9（startReplay 失败语义区分 + 过期�
   });
 });
 
-describe("R8 收尾：需求字面行为断言补全", () => {
-  it("FR-5 事件列表展示 SC / 礼物 / 舰长类型徽标（entryLabel，设计 §2.5）", async () => {
+describe("R8 收尾：事件列表信息流（T8 改写 · FR-6 / AC-6 · 原 entryLabel 拍平文本用例退役）", () => {
+  it("事件列表按信息流渲染 SC / 礼物 / 舰长卡片，保留时间戳与 seek", async () => {
     const events: LiveEvent[] = [
       {
         eventId: "sc-1",
@@ -732,33 +1138,52 @@ describe("R8 收尾：需求字面行为断言补全", () => {
         occurredAt: new Date(START_MS + 10_000).toISOString(),
         sender: { uid: 1, name: "打赏者", face: "", medal: null, guardLevel: null },
         content: "加油",
+        price: 50,
+        scColors: { backgroundStart: "#7a5b12", backgroundEnd: "#463309", fontColor: "#ffe6a6" },
       },
       {
         eventId: "gift-1",
         type: "gift",
         occurredAt: new Date(START_MS + 20_000).toISOString(),
         sender: { uid: 2, name: "送礼者", face: "", medal: null, guardLevel: null },
-        content: "小花花",
+        price: 0.1,
+        gift: { name: "人气票", count: 1, iconUrl: "https://example.invalid/gift.png" },
       },
       {
         eventId: "guard-1",
         type: "guard_buy",
         occurredAt: new Date(START_MS + 30_000).toISOString(),
-        sender: { uid: 3, name: "上舰者", face: "", medal: null, guardLevel: null },
-        content: "开通舰长",
+        sender: { uid: 3, name: "上舰者", face: "", medal: null, guardLevel: 3 },
+        price: 198,
+        guard: { level: 3, name: "舰长", count: 1 },
       },
     ];
     const deps = makeDeps({ fetchEvents: () => Promise.resolve({ total: 3, items: events }) });
     render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={deps} />);
 
-    await waitFor(() => expect(screen.getByRole("button", { name: /SC 打赏者/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /打赏者/ })).toBeInTheDocument());
     const list = screen.getByTestId("event-list");
-    expect(within(list).getByRole("button", { name: /礼物 送礼者/ })).toBeInTheDocument();
-    expect(within(list).getByRole("button", { name: /舰长 上舰者/ })).toBeInTheDocument();
-    // 类型徽标为条目文本前缀，可被读屏/正则命中
-    expect(list.textContent).toContain("SC 打赏者：加油");
-    expect(list.textContent).toContain("礼物 送礼者：小花花");
-    expect(list.textContent).toContain("舰长 上舰者：开通舰长");
+
+    const sc = within(list).getByRole("button", { name: /打赏者/ });
+    expect(sc.textContent).toContain("00:10"); // 时间戳保留
+    expect(sc.textContent).toContain("加油");
+    expect(sc.textContent).toContain("¥50.00");
+    const scCard = sc.querySelector(`.${feedStyles.scCard}`) as HTMLElement;
+    expect(scCard).not.toBeNull();
+    // scColors 内联渐变（jsdom 将 #RRGGBB 规范化为 rgb()）
+    expect(scCard.style.backgroundImage).toMatch(/#7a5b12|rgb\(\s*122,\s*91,\s*18\s*\)/i);
+
+    const gift = within(list).getByRole("button", { name: /送礼者/ });
+    expect(gift.textContent).toContain("人气票 ×1");
+    expect(gift.textContent).toContain("¥0.10");
+
+    const guard = within(list).getByRole("button", { name: /上舰者/ });
+    expect(guard.textContent).toContain("开通了 舰长 ×1");
+    expect(guard.textContent).toContain("¥198.00");
+
+    // 拍平前缀（entryLabel）不再出现——信息流替代纯文本
+    expect(list.textContent).not.toContain("SC 打赏者：加油");
+    expect(list.textContent).not.toContain("礼物 送礼者：");
   });
 });
 
