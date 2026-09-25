@@ -204,6 +204,60 @@ describe("信息流条目 EventFeedItem（T8 / AC-6 · FR-6 · 设计 §2.4）",
     expect(ruleBody(css, "message")).toMatch(/#f4f3f5|night287-0/); // 弹幕正文
   });
 
+  it("SC 卡片含视觉可见且读屏可及的文字类型标识「SC 留言」（PRD §5 配色非唯一信息通道）", () => {
+    const sc = makeEvent({
+      type: "super_chat",
+      sender: { uid: 6, name: "打赏者丙", face: "", medal: null, guardLevel: null },
+      content: "支持一下",
+      price: 30,
+      scColors: {
+        backgroundStart: "#7a5b12",
+        backgroundEnd: "#463309",
+        fontColor: "#ffe6a6",
+      },
+    });
+    const guard = makeEvent({
+      type: "guard_buy",
+      sender: { uid: 7, name: "上舰者", face: "", medal: null, guardLevel: 3 },
+      price: 198,
+      guard: { level: 3, name: "舰长", count: 1 },
+    });
+    const danmaku = makeEvent({ content: "普通弹幕" });
+    const { container } = render(
+      <>
+        <EventFeedItem event={sc} offsetSeconds={41} current={false} onSeek={vi.fn()} />
+        <EventFeedItem event={guard} offsetSeconds={35} current={false} onSeek={vi.fn()} />
+        <EventFeedItem event={danmaku} offsetSeconds={10} current={false} onSeek={vi.fn()} />
+      </>,
+    );
+
+    const scCard = container.querySelector(`.${styles.scCard}`) as HTMLElement;
+    expect(scCard).not.toBeNull();
+    const tag = Array.from(scCard.querySelectorAll("span")).find(
+      (node) => node.textContent === "SC 留言",
+    );
+    expect(tag).toBeDefined(); // 文字类型标识存在
+    expect(tag?.hasAttribute("aria-hidden")).toBe(false); // 读屏可及（未被隐藏）
+    // 类型标识随卡片配色继承 fontColor（不引入新色值，设计 §1）
+    expect(tag?.className).toBe(styles.scTag);
+
+    // 不回归：guard 以「开通了」传达类型；普通弹幕不含 SC 标识
+    const guardEntry = container.querySelectorAll("button")[1] as HTMLButtonElement;
+    expect(guardEntry.textContent).toContain("开通了");
+    const danmakuEntry = container.querySelectorAll("button")[2] as HTMLButtonElement;
+    expect(danmakuEntry.textContent).not.toContain("SC 留言");
+  });
+
+  it("事件条时间戳为左侧固定宽列（设计 §2.4「左侧固定宽列」口径）", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/features/recordings/replay/event-feed.module.css"),
+      "utf8",
+    );
+    const timeBody = ruleBody(css, "time");
+    expect(timeBody).toMatch(/flex:\s*0\s+0\s+auto/);
+    expect(timeBody).toMatch(/min-width:\s*[0-9.]+em/); // 列宽下限固定，短时间戳对齐成列
+  });
+
   it("点击条目触发 onSeek(offsetSeconds)；高亮态挂 data-current", () => {
     const onSeek = vi.fn();
     const { rerender } = render(

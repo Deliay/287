@@ -173,7 +173,8 @@ T9（全量验收）← 全部前置任务
 
 ## 7. 实现进度与偏差记录（2026-09-25 · 代码实现节点）
 
-- **进度**：T1–T8 全部完成并勾选；T9 自动化部分完成——`pnpm test`（28 文件 / 273 通过 / 1 跳过）、`pnpm lint`（0 problems）、`pnpm build`（含 TypeScript 检查）全绿。
+- **进度**：T1–T8 全部完成并勾选；T9 自动化部分完成——`pnpm test`（**28 文件 / 279 通过 / 0 跳过**）、`pnpm lint`（0 problems）、`pnpm build`（含 TypeScript 检查）全绿。
+  - **数字口径说明**：`tests/local-proxy.test.ts` 有一例 `it.skipIf(!existsSync("out/recordings.html"))` 条件跳过用例——**构建前**该产物不存在时记为「273 通过 / 1 跳过」，`pnpm build` 生成 `out/` 后**构建后**记为「274 通过 / 0 跳过」；两者为同一用例的条件执行差异，非统计错误。本节以当前口径 **279 通过 / 0 跳过**（含第一轮打回返工新增 5 例）为准。
 - **待人工项**：需求 §4 人工验收环境项（亮/暗画面下浮层可辨性、跨源 FLV 真实下载、theater 手感、SC/舰长卡片真实数据观感、移动端模拟器触达）仍需人工执行。
 - **偏差与留痕**（均为实现口径细化，不改动已评审的需求/技术方案结论）：
   1. **新增 `tests/icons.test.tsx`**（T2 图标渲染口径独立成文件），已回写技术方案 §3.1 测试清单。
@@ -182,3 +183,18 @@ T9（全量验收）← 全部前置任务
   4. **T8 R8 用例**：已按计划由 entryLabel 拍平文本断言改写为信息流断言（SC 内联配色 / 礼物 / 舰长卡片 / 时间戳保留 / 拍平前缀不再出现）。
   5. **T5 结构迁移**：控件移入 `.videoArea` 后，原 `supported !== false` 包裹在该分支内恒为真（TS 已收窄为 `true | null`）→ 移除冗余包裹；暂停常显除派生 `controlsHidden` 外，暂停路径同步重置 `controlsIdle`，保证恢复播放不残留隐藏态。
   6. **T4 图标**：切换态图标按计划要求「同步按钮图标」新增 `IconFullscreenExit`（与 T2 的 `IconDownload`/`IconTheater` 同描边口径，SVG 断言在 T4 用例覆盖）。
+
+### 7.1 第一轮打回返工（2026-09-25 · 下游 AI 审核）
+
+**必改（阻塞）——FR-6.4 SC 卡片缺文字类型标识**：依据 PRD §5「卡片配色不以颜色为唯一信息通道（保留文字类型标识）」与设计 §1「SC 卡片含文字类型信息（SC 留言）」，`SuperChatBody` 补 `「SC 留言」`标签（`.scTag`：描边继承卡片 `fontColor`，不引入新色值；视觉可见、未 `aria-hidden`、读屏可及）。红-绿：`tests/recordings-event-feed.test.tsx` 新增「SC 卡片含文字类型标识」用例（同时断言 guard 以「开通了」、普通弹幕不含该标签，防不回归）。
+
+**建议项（一并处理）**：
+
+1. **hover 气泡两端溢出裁切**：`--preview-ratio` 由组件内联传入，`.progressPreview { left: clamp(2.75em, calc(var(--preview-ratio) * 100%), calc(100% - 2.75em)) }` 按气泡半宽夹取（`min-width: 5.5em` 定半宽），两端不越界、不被 `.videoArea{overflow:hidden}` 裁切；新增「预览气泡位置夹取」用例（0 / 0.5 / 1 三点 + CSS clamp 断言）。
+2. **theater 未锁底层滚动**：新增 effect——theater 开启期间 `document.body.style.overflow = "hidden"`，关闭/卸载时还原（StrictMode 双挂载按 previous 值还原）；新增「锁定底层页面滚动」用例（开/关/卸载三段）。
+3. **下拉与时间戳口径**：`RecordingActions` 开关补 `aria-haspopup="true"`，Esc 收起后焦点归还开关（新增用例：焦点从下载项 → Esc → 开关）；事件条时间戳列补 `min-width: 4.5em`（设计 §2.4「左侧固定宽列」，新增 CSS 断言用例）。
+
+**留痕口径更正**：
+
+- 实现分支提交数：需求总分支之上为 **8 个提交**（T1–T7 各一提交、T8+T9 合并为 `579db61`），此前产物写「9 个提交对应 T1–T9」有误——本轮返工后以 `git log` 实数为准回写黑板。
+- 测试计数：见 §7 开头「数字口径说明」。

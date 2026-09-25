@@ -246,6 +246,28 @@ describe("FR-3 进度条 hover 时间预览（T6 / AC-3 · 设计 §2.2）", () 
     expect((progress as HTMLInputElement).value).toBe("60");
   });
 
+  it("预览气泡位置夹取：两端按边缘锚定（--preview-ratio 驱动 CSS clamp），中部随指针居中", async () => {
+    const { wrap } = await renderWithDuration();
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 0 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("0");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 400 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("1");
+
+    fireEvent.pointerMove(wrap, { pointerType: "mouse", clientX: 200 });
+    expect(screen.getByTestId("progress-preview").style.getPropertyValue("--preview-ratio")).toBe("0.5");
+
+    // 位置夹取落在 CSS：气泡左右半宽被 clamp 在容器内，不被 .videoArea 的 overflow:hidden 裁切
+    const css = readFileSync(
+      path.join(process.cwd(), "src/features/recordings/replay/replay-stage.module.css"),
+      "utf8",
+    );
+    const previewBody = ruleBody(css, "progressPreview");
+    expect(previewBody).toMatch(/left:\s*clamp\(/);
+    expect(previewBody).toMatch(/var\(--preview-ratio\)/);
+  });
+
   it("拖动中优先显示 draft 值（与 hover 互斥），松开才提交 seek（P3(a) 不回归）", async () => {
     const { performSeek, progress, wrap } = await renderWithDuration();
 
@@ -408,6 +430,23 @@ describe("FR-5 网页全屏 theater（T7 / AC-5 · 设计 §2.3）", () => {
     });
     await flush();
     expect(layout).toHaveAttribute("data-theater", "false");
+  });
+
+  it("theater 期间锁定底层页面滚动，退出后恢复（含卸载恢复，避免背景滚动漂移）", async () => {
+    const { unmount } = render(<ReplayStage roomId={1001} file={file} bounds={bounds} deps={makeDeps()} />);
+    await flush();
+    const theaterButton = screen.getByRole("button", { name: "网页全屏" });
+
+    expect(document.body.style.overflow).toBe("");
+    fireEvent.click(theaterButton);
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.click(theaterButton);
+    expect(document.body.style.overflow).toBe("");
+
+    fireEvent.click(theaterButton); // 保持开启直至卸载
+    expect(document.body.style.overflow).toBe("hidden");
+    unmount();
+    expect(document.body.style.overflow).toBe("");
   });
 
   it("移动端断点不出现网页全屏入口（按钮 CSS 隐藏，与音量滑杆同口径 · 设计 §2.3）", () => {

@@ -27,9 +27,10 @@
   box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
 }
 
-/* 左侧固定宽时间戳列（mm:ss），点击条目 seek 不变 */
+/* 左侧固定宽时间戳列（设计 §2.4「左侧固定宽列」）：列宽下限固定，短时间戳对齐成列 */
 .time {
   flex: 0 0 auto;
+  min-width: 4.5em;
   font-variant-numeric: tabular-nums;
   color: var(--mantine-color-night287-4);
   font-size: var(--mantine-font-size-xs);
@@ -156,6 +157,24 @@
 
 .scSender {
   font-weight: 600;
+}
+
+.scIdentity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* SC 文字类型标识（PRD §5 / 设计 §1）：配色不作为唯一信息通道，继承卡片 fontColor */
+.scTag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.5;
+  opacity: 0.9;
 }
 
 .scMessage {

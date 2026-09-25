@@ -638,6 +638,21 @@ describe("历史录播条目按钮组 播放/下载（T3 / AC-2 · FR-2 · 设�
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("条目下拉具备 aria-haspopup，Esc 收起后焦点归还开关（可键盘操作 · 设计 §3）", async () => {
+    const { item } = await renderOneItem();
+    const toggle = within(item).getByRole("button", { name: /更多操作/ });
+    expect(toggle).toHaveAttribute("aria-haspopup", "true");
+
+    fireEvent.click(toggle);
+    const download = within(item).getByRole("link", { name: "下载" });
+    download.focus();
+    expect(document.activeElement).toBe(download);
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(within(item).queryByRole("link", { name: "下载" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(toggle); // 焦点归还开关
+  });
+
   it("按钮组图标为内联 SVG、无 emoji/Unicode 字形（R14-5 口径）", async () => {
     const { item } = await renderOneItem();
     fireEvent.click(within(item).getByRole("button", { name: /更多操作/ }));

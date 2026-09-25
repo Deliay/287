@@ -273,6 +273,8 @@ function MemberGroup({ member, roomId, statusKind = "ok" }: MemberGroupProps) {
 function RecordingActions({ roomId, fileName }: { roomId: number; fileName: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  /** 下拉开关：Esc 收起后焦点归还于此（设计 §3 可键盘操作）。 */
+  const toggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -280,7 +282,9 @@ function RecordingActions({ roomId, fileName }: { roomId: number; fileName: stri
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onDocumentKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      toggleRef.current?.focus();
     };
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onDocumentKeyDown);
@@ -303,8 +307,10 @@ function RecordingActions({ roomId, fileName }: { roomId: number; fileName: stri
       <div className={styles.menuWrap}>
         <button
           type="button"
+          ref={toggleRef}
           className={styles.menuToggle}
           aria-label="更多操作"
+          aria-haspopup="true"
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >

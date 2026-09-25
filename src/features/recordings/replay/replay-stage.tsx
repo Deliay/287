@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type UIEvent,
 } from "react";
@@ -346,6 +347,17 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, [applyTheater]);
+
+  // 网页全屏期间锁定底层页面滚动：滚轮在覆盖层上不再滚动背景文档，退出后页面位置不漂移
+  useEffect(() => {
+    if (!isTheaterMode) return;
+    const { body } = document;
+    const previousOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = previousOverflow;
+    };
+  }, [isTheaterMode]);
 
   /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
@@ -856,7 +868,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                     className={styles.progressPreview}
                     data-testid="progress-preview"
                     aria-hidden="true"
-                    style={{ left: `${preview.ratio * 100}%` }}
+                    // 位置夹取交由 CSS clamp：按气泡半宽把左右边界收在进度条内，避免被画面 overflow 裁切
+                    style={{ "--preview-ratio": preview.ratio } as CSSProperties}
                   >
                     {formatOffset(preview.time)}
                   </span>

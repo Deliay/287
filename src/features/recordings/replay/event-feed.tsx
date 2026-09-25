@@ -124,7 +124,11 @@ function SuperChatBody({ event }: { event: LiveEvent }) {
   return (
     <span className={styles.scCard} style={inlineStyle}>
       <span className={styles.scHead}>
-        <span className={styles.scSender}>{event.sender.name}</span>
+        <span className={styles.scIdentity}>
+          {/* 文字类型标识：配色不作为唯一信息通道（PRD §5 / 设计 §1「SC 留言」） */}
+          <span className={styles.scTag}>SC 留言</span>
+          <span className={styles.scSender}>{event.sender.name}</span>
+        </span>
         <Price value={event.price} />
       </span>
       {event.content && <span className={styles.scMessage}>{event.content}</span>}
