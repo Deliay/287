@@ -29,7 +29,7 @@ describe("直播状态徽章 LiveBadge", () => {
     expect(skeleton).toHaveClass(styles.badge);
   });
 
-  it("开播时可见文本为「正在直播：{标题}」，渲染为指向成员 B 站主页的新标签页链接（AC-2/AC-3）", () => {
+  it("开播时可见文本为「正在直播：{标题}」，渲染为指向直播间的新标签页链接（AC-1）", () => {
     useLiveStatusMock.mockReturnValue({
       status: { living: true, title: "重生之我是钓鱼大师" },
     });
@@ -37,12 +37,40 @@ describe("直播状态徽章 LiveBadge", () => {
 
     const link = screen.getByRole("link");
     expect(link).toHaveTextContent("正在直播：重生之我是钓鱼大师");
-    expect(link).toHaveAttribute("href", members[0].bilibili);
+    expect(link).toHaveAttribute(
+      "href",
+      `https://live.bilibili.com/${members[0].roomId}`,
+    );
     expect(link).toHaveAttribute("target", "_blank");
     expect(link.getAttribute("rel") ?? "").toContain("noopener");
     expect(link.getAttribute("aria-label") ?? "").toContain("正在直播");
     expect(link.getAttribute("aria-label") ?? "").toContain(
       members[0].romanName,
+    );
+  });
+
+  it("成员缺失 roomId 时开播链接降级为个人主页，不渲染无效直播间地址（AC-2）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    const withoutRoomId = { ...members[1], roomId: undefined };
+    renderWithTheme(<LiveBadge member={withoutRoomId} />);
+
+    const link = screen.getByRole("link");
+    expect(link).toHaveAttribute("href", members[1].bilibili);
+    expect(link.getAttribute("href") ?? "").not.toContain("live.bilibili.com");
+  });
+
+  it("逐成员 liveUrl 覆盖优先于 roomId 推导（逃生口语义不变）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    const overridden = { ...members[2], liveUrl: "https://example.com/live" };
+    renderWithTheme(<LiveBadge member={overridden} />);
+
+    expect(screen.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://example.com/live",
     );
   });
 
@@ -115,6 +143,57 @@ describe("直播状态徽章 LiveBadge", () => {
     expect(badgeBody).toMatch(
       /border-radius:\s*var\(--mantine-radius-xs\)/,
     );
+  });
+});
+
+describe("未开播态替换渲染 offlineNode（PRD FR-4 返工 R1：替换而非并列）", () => {
+  const entryNode = <span data-testid="recording-entry" />;
+
+  it("未开播：渲染替换节点，且不再出现「未开播」纯文本（详情区替换语义）", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: false, title: null },
+    });
+    renderWithTheme(
+      <LiveBadge member={members[0]} offlineNode={entryNode} />,
+    );
+
+    expect(screen.getByTestId("recording-entry")).toBeInTheDocument();
+    expect(screen.queryByText("未开播")).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("开播：只见直播徽章，不渲染替换节点", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: true, title: "今晚杂谈" },
+    });
+    renderWithTheme(
+      <LiveBadge member={members[1]} offlineNode={entryNode} />,
+    );
+
+    expect(screen.getByRole("link")).toHaveTextContent("正在直播：今晚杂谈");
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
+  });
+
+  it("加载中：只见占位骨架，替换节点与「未开播」文本均不出现", () => {
+    useLiveStatusMock.mockReturnValue({ status: null });
+    renderWithTheme(
+      <LiveBadge member={members[2]} offlineNode={entryNode} />,
+    );
+
+    expect(document.querySelector(`.${styles.skeleton}`)).not.toBeNull();
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
+    expect(screen.queryByText("未开播")).toBeNull();
+  });
+
+  it("未传 offlineNode（HeroWall 侧）保持「未开播」纯文本，AC-3 行为不回归", () => {
+    useLiveStatusMock.mockReturnValue({
+      status: { living: false, title: null },
+    });
+    renderWithTheme(<LiveBadge member={members[3]} />);
+
+    expect(screen.getByText("未开播")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.queryByTestId("recording-entry")).toBeNull();
   });
 });
 

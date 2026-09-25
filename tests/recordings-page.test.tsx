@@ -6,6 +6,8 @@ import { renderWithTheme } from "./utils";
 const { pathHolder } = vi.hoisted(() => ({ pathHolder: { current: "/recordings" } }));
 vi.mock("next/navigation", () => ({
   usePathname: () => pathHolder.current,
+  // RecordingsSection 走 useSearchParams 读 ?member=（静态导出需 Suspense 边界）
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 function jsonResponse(body: unknown) {
