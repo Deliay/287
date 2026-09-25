@@ -41,6 +41,7 @@ tests/
 ├── recordings-section.test.tsx         # 补按钮组用例
 ├── recordings-api.test.ts              # 补 scColors/time/gift_v2 解析用例
 ├── recordings-replay-stage.test.tsx    # 补浮层/全屏切换/网页全屏/hover 预览用例
+├── icons.test.tsx                      # 新增：IconDownload / IconTheater 渲染口径用例
 └── recordings-event-feed.test.tsx      # 新增：信息流条目渲染用例
 ```
 

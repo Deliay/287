@@ -32,7 +32,7 @@
 
 ## 2. 任务拆解
 
-### T1 数据层类型与解析扩展（FR-6 前置）
+### T1 ✅ 数据层类型与解析扩展（FR-6 前置）
 
 - 产出：`src/features/recordings/types.ts`——`LiveEvent` 增加 `scColors?: { backgroundStart; backgroundEnd; fontColor }`、`time?: number`；`LiveEventType` 白名单防御性加入 `"gift_v2"` 字面量。`src/features/recordings/api.ts`——`parseLiveEvent` 解析 `scColors`/`time`（可缺省、非法值置空），`type: "gift_v2"` 归一为 `gift`（结构同构，服务端已归一，见需求 §7）。
 - **测试用例（红）**（`tests/recordings-api.test.ts` 补充）：
@@ -42,10 +42,10 @@
 - 对应验收：AC-6 数据基础、AC-7。
 - 预计：1h。
 
-### T2 新增 SVG 图标（FR-2 / FR-5 前置）
+### T2 ✅ 新增 SVG 图标（FR-2 / FR-5 前置）
 
 - 产出：`src/components/icons.tsx` 新增 `IconDownload`、`IconTheater`（网页全屏），沿用 `ICON_SVG` 描边口径，与 `IconPlay`/`IconArrowLeft` 视觉一致；无 emoji/Unicode 字形（R14-5）。
-- **测试用例（红）**：
+- **测试用例（红）**（新增 `tests/icons.test.tsx`——图标为纯组件、无页面归属，独立成文件比并入 T3/T7 用例更贴合「渲染测试与既有图标断言同法」的口径）：
   1. 两个图标渲染为内联 `<svg>`（`aria-hidden`、`viewBox="0 0 24 24"`），渲染测试与既有图标断言同法。
   2. 所在按钮（T3 下载项、T7 网页全屏按钮）图标为 SVG 的断言在 T3/T7 用例中覆盖。
 - 对应验收：AC-2、AC-5（图标部分）。
