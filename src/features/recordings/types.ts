@@ -47,12 +47,26 @@ export interface RoomRecordingsResponse {
   files: RecordingFile[];
 }
 
-/** 直播事件类型（弹幕 / 礼物 / 舰长 / SuperChat）。 */
-export type LiveEventType = "danmaku" | "super_chat" | "gift" | "guard_buy";
+/**
+ * 直播事件类型（弹幕 / 礼物 / 舰长 / SuperChat）。
+ *
+ * `gift_v2` 为上游 B 站信封类型：服务端归一化后**不会**出现在回放接口输出中
+ * （需求 §7 调研结论），此处作为白名单字面量仅用于**解析层防御性兼容**——
+ * `parseLiveEvent` 收到它时按 `gift` 归一，故 `LiveEvent.type` 的实际取值恒为四类。
+ */
+export type LiveEventType = "danmaku" | "super_chat" | "gift" | "guard_buy" | "gift_v2";
+
+/** SuperChat 卡片配色（接口可选字段，缺失/非法时由渲染层回退默认金色系，设计 §1）。 */
+export interface SuperChatColors {
+  backgroundStart: string;
+  backgroundEnd: string;
+  fontColor: string;
+}
 
 /** `GET {API_BASE}/api/live-events/replay` 单条事件。 */
 export interface LiveEvent {
   eventId: string;
+  /** 解析后的真实类型；`gift_v2` 已归一为 `gift`（技术方案 §4.1）。 */
   type: LiveEventType;
   occurredAt: string;
   sender: {
@@ -65,6 +79,10 @@ export interface LiveEvent {
   content?: string;
   emote?: { url: string; name: string; width: number; height: number };
   price?: number;
+  /** SuperChat 卡片配色（2026-09-25 实测已返回，前端类型新增）。 */
+  scColors?: SuperChatColors;
+  /** SuperChat 悬停秒数（实测已返回，前端类型新增；卡片展示不依赖）。 */
+  time?: number;
   gift?: { name: string; count: number; iconUrl: string };
   guard?: { level: number; name: string; count: number };
 }

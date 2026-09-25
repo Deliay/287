@@ -126,6 +126,39 @@ export function IconFullscreen({ className, style }: IconProps) {
   );
 }
 
+/** 下载（录播条目下拉菜单「下载」，FR-2 / 设计 §2.5）。 */
+export function IconDownload({ className, style }: IconProps) {
+  return (
+    <svg {...ICON_SVG} className={className} style={wrapperStyle(style)}>
+      <path d="M12 4v11" />
+      <path d="M7.5 10.5l4.5 4.5 4.5-4.5" />
+      <path d="M4.5 19.5h15" />
+    </svg>
+  );
+}
+
+/** 网页全屏（theater 模式，FR-5 / 设计 §2.3）：外框 + 内画面，与 IconFullscreen 四角图标可区分。 */
+export function IconTheater({ className, style }: IconProps) {
+  return (
+    <svg {...ICON_SVG} className={className} style={wrapperStyle(style)}>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <rect x="6.5" y="8.5" width="11" height="7" rx="1.5" />
+    </svg>
+  );
+}
+
+/** 全屏退出（⛶ 内收，FR-4：与进入全屏图标可区分，切换态同步）。 */
+export function IconFullscreenExit({ className, style }: IconProps) {
+  return (
+    <svg {...ICON_SVG} className={className} style={wrapperStyle(style)}>
+      <path d="M4.5 9H9V4.5" />
+      <path d="M19.5 9H15V4.5" />
+      <path d="M4.5 15H9V19.5" />
+      <path d="M19.5 15H15V19.5" />
+    </svg>
+  );
+}
+
 /** 音量（🔊，回放控件音量前缀）。 */
 export function IconVolume({ className, style }: IconProps) {
   return (

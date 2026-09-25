@@ -1,0 +1,183 @@
+/* 事件信息流条目（FR-6 · 设计 §2.4 / §1 配色） */
+
+.item,
+.itemCurrent {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mantine-spacing-xs);
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-bottom: 1px solid var(--mantine-color-night287-7);
+  background: transparent;
+  color: var(--mantine-color-night287-2);
+  padding: 8px;
+  cursor: pointer;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.item:hover {
+  background: var(--mantine-color-night287-7);
+  color: var(--mantine-color-night287-0);
+}
+
+.itemCurrent {
+  background: color-mix(in srgb, var(--mantine-color-night287-6) 35%, transparent);
+  color: var(--mantine-color-night287-0);
+  box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
+}
+
+/* 左侧固定宽时间戳列（设计 §2.4「左侧固定宽列」）：列宽下限固定，短时间戳对齐成列 */
+.time {
+  flex: 0 0 auto;
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
+  color: var(--mantine-color-night287-4);
+  font-size: var(--mantine-font-size-xs);
+  padding-top: 2px;
+}
+
+/* FR-6.1/6.2 inline 流式容器：自然换行（文本随容器折行） */
+.flow {
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.6;
+}
+
+/* 粉丝牌 badge：牌名 + 等级，边框/文字取 medal.color，底为该色 15% 混合 */
+.medal {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.medalName {
+  font-weight: 600;
+}
+
+.medalLevel {
+  opacity: 0.85;
+}
+
+/* 用户名「浅色」：相对正文更弱的强调色（设计 §1 night287-2 / #c4c2cc） */
+.sender {
+  color: var(--mantine-color-night287-2);
+}
+
+.colon {
+  margin-right: 4px;
+  color: var(--mantine-color-night287-3);
+}
+
+/* 弹幕正文（设计 §1 night287-0 / #f4f3f5） */
+.message {
+  color: var(--mantine-color-night287-0);
+}
+
+/* 表情图文混排：固定行内高度、懒加载 */
+.emote {
+  height: 1.4em;
+  width: auto;
+  margin-left: 4px;
+  vertical-align: -0.3em;
+}
+
+.price {
+  margin-left: 6px;
+  color: var(--mantine-color-night287-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.giftLead {
+  margin: 0 4px;
+  color: var(--mantine-color-night287-3);
+}
+
+.giftIcon {
+  height: 1.2em;
+  width: auto;
+  margin: 0 4px;
+  vertical-align: -0.2em;
+}
+
+.giftName {
+  color: var(--mantine-color-night287-0);
+}
+
+/* FR-6.3 舰长上舰：独占一行醒目卡片（底 night287-8 + 左边框金） */
+.guardCard {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #d9b45b;
+  background: var(--mantine-color-night287-8);
+  border-radius: 6px;
+  color: var(--mantine-color-night287-0);
+}
+
+.guardSender {
+  font-weight: 600;
+}
+
+.guardText {
+  color: var(--mantine-color-night287-1);
+}
+
+/* FR-6.4 SC 卡片默认配色（scColors 缺失/非法时回退 · 设计 §1） */
+.scCard {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background-image: linear-gradient(#7a5b12, #463309);
+  color: #ffe6a6;
+}
+
+.scHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--mantine-spacing-xs);
+}
+
+.scSender {
+  font-weight: 600;
+}
+
+.scIdentity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* SC 文字类型标识（PRD §5 / 设计 §1）：配色不作为唯一信息通道，继承卡片 fontColor */
+.scTag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: var(--mantine-font-size-xs);
+  line-height: 1.5;
+  opacity: 0.9;
+}
+
+.scMessage {
+  line-height: 1.5;
+  word-break: break-word;
+}

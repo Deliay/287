@@ -319,6 +319,137 @@ describe("录播 API 封装 types/api（T1）", () => {
     expect(status.items.some((item) => item.state === "recording")).toBe(false);
   });
 
+  it("T1 super_chat 实测样例解析出 scColors 与 time（逐字段断言，AC-6 数据基础）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          total: 1,
+          page: 1,
+          pageSize: 100,
+          items: [
+            {
+              eventId: "sc-1",
+              type: "super_chat",
+              occurredAt: "2026-09-23T21:00:05.000Z",
+              sender: { uid: 2, name: "观众乙", face: "", medal: null, guardLevel: null },
+              content: "加油",
+              price: 50,
+              scColors: {
+                backgroundStart: "#7a5b12",
+                backgroundEnd: "#463309",
+                fontColor: "#ffe6a6",
+              },
+              time: 60,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await fetchLiveEvents({
+      roomId: 1,
+      start: "2026-09-23T21:00:00.000Z",
+      end: "2026-09-23T21:10:00.000Z",
+      page: 1,
+      pageSize: 100,
+    });
+
+    const sc = result.items[0];
+    expect(sc?.type).toBe("super_chat");
+    expect(sc?.price).toBe(50);
+    expect(sc?.scColors).toEqual({
+      backgroundStart: "#7a5b12",
+      backgroundEnd: "#463309",
+      fontColor: "#ffe6a6",
+    });
+    expect(sc?.time).toBe(60);
+  });
+
+  it("T1 type=「gift_v2」被白名单接受并归一为 gift，gift 结构可用（不被丢弃）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          total: 1,
+          items: [
+            {
+              eventId: "gift-v2-1",
+              type: "gift_v2",
+              occurredAt: "2026-09-23T21:00:09.000Z",
+              sender: { uid: 3, name: "送礼者", face: "", medal: null, guardLevel: null },
+              price: 0.1,
+              gift: { name: "人气票", count: 1, iconUrl: "https://example.invalid/g.png" },
+            },
+          ],
+        }),
+      ),
+    );
+
+    const result = await fetchLiveEvents({
+      roomId: 1,
+      start: "2026-09-23T21:00:00.000Z",
+      end: "2026-09-23T21:10:00.000Z",
+      page: 1,
+      pageSize: 100,
+    });
+
+    const gift = result.items[0];
+    expect(gift).not.toBeNull();
+    expect(gift?.type).toBe("gift"); // 归一为 gift（结构同构，前端透明）
+    expect(gift?.gift).toEqual({ name: "人气票", count: 1, iconUrl: "https://example.invalid/g.png" });
+    expect(gift?.price).toBe(0.1);
+  });
+
+  it("T1 scColors/time 缺失或非法时置空不抛错，既有宽容校验用例不回归", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          total: 4,
+          items: [
+            { eventId: "s1", type: "super_chat", occurredAt: "2026-09-23T21:00:01.000Z", sender: { uid: 1, name: "甲", face: "", medal: null, guardLevel: null } },
+            // 非法配色（非 #RRGGBB）+ 字段类型不符 → 一并置空
+            {
+              eventId: "s2",
+              type: "super_chat",
+              occurredAt: "2026-09-23T21:00:02.000Z",
+              sender: { uid: 2, name: "乙", face: "", medal: null, guardLevel: null },
+              scColors: { backgroundStart: "red", backgroundEnd: "#fff", fontColor: 123 },
+              time: "60",
+            },
+            // 合法 time + 非法 time（负值）混合
+            {
+              eventId: "s3",
+              type: "super_chat",
+              occurredAt: "2026-09-23T21:00:03.000Z",
+              sender: { uid: 3, name: "丙", face: "", medal: null, guardLevel: null },
+              time: -1,
+            },
+            { eventId: "s4", type: "danmaku", occurredAt: "2026-09-23T21:00:04.000Z", sender: { uid: 4, name: "丁", face: "", medal: null, guardLevel: null }, content: "好听" },
+          ],
+        }),
+      ),
+    );
+
+    const result = await fetchLiveEvents({
+      roomId: 1,
+      start: "2026-09-23T21:00:00.000Z",
+      end: "2026-09-23T21:10:00.000Z",
+      page: 1,
+      pageSize: 100,
+    });
+
+    expect(result.items).toHaveLength(4); // 无 item 因新增字段被丢弃
+    expect(result.items[0]?.scColors).toBeUndefined();
+    expect(result.items[0]?.time).toBeUndefined();
+    expect(result.items[1]?.scColors).toBeUndefined();
+    expect(result.items[1]?.time).toBeUndefined();
+    expect(result.items[2]?.scColors).toBeUndefined();
+    expect(result.items[2]?.time).toBeUndefined();
+    expect(result.items[3]?.type).toBe("danmaku");
+  });
+
   it("次要10 fetchLiveEvents 钳制 pageSize≤100 且查询区间≤12h（上游契约）", async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ total: 0, items: [] }));
     vi.stubGlobal("fetch", fetchMock);

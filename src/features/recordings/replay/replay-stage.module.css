@@ -90,6 +90,21 @@
   inset: 0;
   width: 100%;
   height: 100%;
+  /* 任意容器比例下保持画面比例（原生全屏 / 网页全屏容器非 16:9 时不拉伸） */
+  object-fit: contain;
+}
+
+/* 原生全屏（FR-4 · T4 骨架，浮层贴底细节并入 T5）：videoArea 撑满可视区 */
+.videoColumn:fullscreen {
+  gap: 0;
+  background: #000;
+}
+
+.videoColumn:fullscreen .videoArea {
+  flex: 1 1 auto;
+  height: 100%;
+  aspect-ratio: auto;
+  border-radius: 0;
 }
 
 .overlayState,
@@ -155,15 +170,27 @@
   cursor: pointer;
 }
 
+/* 控件浮层（FR-1 · 设计 §2.1）：覆盖画面底部的悬浮层，不占独立布局空间 */
 .controls,
 .controlsHidden {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--mantine-spacing-xs);
   padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
-  background: var(--mantine-color-night287-8);
-  border: 1px solid var(--mantine-color-night287-7);
-  border-radius: 10px;
+  /* 渐变遮罩保证亮色画面上按钮可辨（设计 §1） */
+  background: linear-gradient(transparent, rgba(0, 0, 0, .7));
+}
+
+/* 进度条贴浮层顶缘、独占上缘一行，其余控件一行折行收纳 */
+.controls .progressWrap {
+  order: -1;
+  flex: 1 0 100%;
+  padding-top: 6px;
 }
 
 .controlsHidden {
@@ -245,6 +272,27 @@
   background: transparent;
 }
 
+/* hover 时间预览气泡（FR-3 · 设计 §2.2）：跟随指针、悬于进度条上方，不参与布局。
+   位置夹取：按气泡半宽（min-width 的一半 = 2.75em）把左右边界 clamp 在进度条内，
+   两端不越界、不被 `.videoArea` 的 overflow:hidden 裁切。 */
+.progressPreview {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: clamp(2.75em, calc(var(--preview-ratio) * 100%), calc(100% - 2.75em));
+  transform: translateX(-50%);
+  min-width: 5.5em;
+  max-width: 100%;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.85);
+  color: var(--mantine-color-night287-0);
+  font-size: var(--mantine-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 .time {
   font-size: var(--mantine-font-size-xs);
   color: var(--mantine-color-night287-3);
@@ -289,6 +337,11 @@
     align-items: center;
     justify-content: center;
   }
+
+  /* 移动端不提供网页全屏入口（FR-5 · 设计 §2.3，与音量滑杆同口径） */
+  .theaterButton {
+    display: none;
+  }
 }
 
 /* 事件列表 */
@@ -311,46 +364,7 @@
   padding: var(--mantine-spacing-xs);
 }
 
-.entry,
-.entryCurrent {
-  display: flex;
-  align-items: baseline;
-  gap: var(--mantine-spacing-xs);
-  width: 100%;
-  text-align: left;
-  border: none;
-  border-bottom: 1px solid var(--mantine-color-night287-7);
-  background: transparent;
-  color: var(--mantine-color-night287-2);
-  padding: 8px;
-  cursor: pointer;
-  font-size: var(--mantine-font-size-sm);
-}
-
-.entry:hover {
-  background: var(--mantine-color-night287-7);
-  color: var(--mantine-color-night287-0);
-}
-
-.entryCurrent {
-  background: color-mix(in srgb, var(--mantine-color-night287-6) 35%, transparent);
-  color: var(--mantine-color-night287-0);
-  box-shadow: inset 2px 0 0 0 var(--mantine-color-night287-3);
-}
-
-.entryTime {
-  flex: 0 0 auto;
-  font-variant-numeric: tabular-nums;
-  color: var(--mantine-color-night287-4);
-  font-size: var(--mantine-font-size-xs);
-}
-
-.entryText {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* 事件条目样式已迁移至 ./event-feed.module.css（FR-6 信息流化，T8） */
 
 .listState {
   padding: var(--mantine-spacing-md);
@@ -394,4 +408,44 @@
 .message a {
   color: var(--mantine-color-night287-2);
   text-decoration: underline;
+}
+
+/* ---- 网页全屏 theater（FR-5 · 设计 §2.3）---- */
+
+/* 舞台 fixed 占满浏览器可视区域，层级高于页头（z-index:100）；左画面 / 右事件列表 */
+.theater {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  flex-direction: row;
+  align-items: stretch;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-sm);
+  background: var(--mantine-color-night287-9);
+  overflow: hidden;
+}
+
+.theater .videoColumn {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 尺寸容器：画面按「剩余空间」取 16:9 最大内接尺寸（container query 单位） */
+  container-type: size;
+  align-items: center;
+  justify-content: center;
+}
+
+.theater .videoArea {
+  /* 退化基线（不支持容器查询时）：撑满，画面仍由 object-fit 保持比例并居中 */
+  width: 100%;
+  /* 剩余宽高下的 16:9 最大内接宽度：尽可能大且不溢出 */
+  width: min(100%, calc(100cqh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  margin: auto; /* 垂直水平居中（而非顶对齐） */
+}
+
+.theater .timeline {
+  flex: 0 0 clamp(320px, 26vw, 360px);
+  min-width: 0;
+  min-height: 0;
+  max-height: none; /* 右侧事件列表全高滚动 */
 }

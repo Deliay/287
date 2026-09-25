@@ -7,6 +7,8 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
   type UIEvent,
 } from "react";
 import Link from "next/link";
@@ -14,18 +16,21 @@ import { useSearchParams } from "next/navigation";
 import {
   IconArrowLeft,
   IconFullscreen,
+  IconFullscreenExit,
   IconPause,
   IconPlay,
+  IconTheater,
   IconVolume,
   IconVolumeMute,
 } from "@/components/icons";
 import { members } from "@/data/members";
 import { fetchRoomRecordings, recordingFileUrl } from "../api";
-import type { RecordingFile } from "../types";
+import type { LiveEvent, RecordingFile } from "../types";
 import { formatDateTime, formatOffset } from "../format";
 import {
   DanmakuOverlay,
 } from "./danmaku-overlay";
+import { EventFeedItem } from "./event-feed";
 import { useReplayEvents, type FetchEvents } from "./replay-events";
 import { segmentBoundsForFile, windowIndexFor, type SegmentBounds, offsetMsFor } from "./replay-windows";
 import {
@@ -89,25 +94,13 @@ export interface ReplayStageProps {
   deps?: ReplayStageDeps;
 }
 
+/**
+ * 事件列表条目（FR-6 重构）：不再拍平成 `{sender, content}` 纯文本——
+ * 直接持有 `LiveEvent` 结构化数据，由 `EventFeedItem` 按类型分派渲染（技术方案 §4.2）。
+ */
 interface TimelineEntry {
-  eventId: string;
-  type: string;
-  occurredAt: string;
+  event: LiveEvent;
   offsetSeconds: number;
-  sender: string;
-  content: string;
-}
-
-function entryLabel(entry: TimelineEntry): string {
-  const type =
-    entry.type === "super_chat"
-      ? "SC "
-      : entry.type === "gift"
-        ? "礼物 "
-        : entry.type === "guard_buy"
-          ? "舰长 "
-          : "";
-  return `${type}${entry.sender}：${entry.content}`;
 }
 
 /**
@@ -172,6 +165,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [seekError, setSeekError] = useState<string | null>(null);
   /** 进度条拖动预览值：松开才真正 seek（审核 P3-a） */
   const [draftTime, setDraftTime] = useState<number | null>(null);
+  /** 进度条 hover 时间预览（FR-3）：仅鼠标指针写入，pointerleave 置空 */
+  const [hoverPreview, setHoverPreview] = useState<{ ratio: number; time: number } | null>(null);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const volumeBeforeMuteRef = useRef(1);
@@ -180,6 +175,19 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   const [controlsIdle, setControlsIdle] = useState(false);
   const [controlsActivity, setControlsActivity] = useState(0);
   const [following, setFollowing] = useState(true);
+  /**
+   * 是否处于原生全屏（FR-4）：以 `document.fullscreenElement` 为单一事实源，
+   * `fullscreenchange` 驱动回正——覆盖点击切换与 Esc 等浏览器原生退出路径。
+   */
+  const [isFullscreen, setIsFullscreen] = useState(
+    () => typeof document !== "undefined" && Boolean(document.fullscreenElement),
+  );
+  /** 网页全屏 theater（FR-5 · 设计 §2.3）：舞台 fixed 满窗，左画面居中 / 右事件列表。 */
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  /** theater 的同步快照：供 `fullscreenchange` 回调读取（effect 闭包不依赖 state 依赖数组）。 */
+  const theaterRef = useRef(false);
+  /** 进入浏览器全屏前的 theater 记忆：退出全屏后按此恢复（互斥口径，设计 §2.3）。 */
+  const resumeTheaterRef = useRef(false);
 
   const startReplay = deps.startReplay ?? defaultStartReplay;
   const destroyReplay = deps.destroyReplay ?? defaultDestroyReplay;
@@ -213,14 +221,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     for (const event of windowedEvents) {
       const offset = offsetMsFor(event.occurredAt, recordStartMs);
       if (!Number.isFinite(offset)) continue;
-      mapped.push({
-        eventId: event.eventId,
-        type: event.type,
-        occurredAt: event.occurredAt,
-        offsetSeconds: offset / 1000,
-        sender: event.sender.name,
-        content: event.content ?? (event.type === "danmaku" ? "" : event.type),
-      });
+      mapped.push({ event, offsetSeconds: offset / 1000 });
     }
     mapped.sort((a, b) => a.offsetSeconds - b.offsetSeconds);
     return mapped;
@@ -320,6 +321,43 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     const timer = window.setTimeout(() => setControlsIdle(true), CONTROLS_HIDE_MS);
     return () => window.clearTimeout(timer);
   }, [playing, controlsActivity]);
+
+  /** 写入 theater 态（state + ref 快照同步），供按钮与全屏互斥逻辑共用。 */
+  const applyTheater = useCallback((next: boolean) => {
+    theaterRef.current = next;
+    setIsTheaterMode(next);
+  }, []);
+
+  // 全屏状态同步 + 与网页全屏互斥（FR-4 / FR-5）：挂载注册、卸载移除；
+  // Esc 原生退出后按钮态回正，并按进入全屏前的记忆恢复 theater。
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = Boolean(document.fullscreenElement);
+      setIsFullscreen(active);
+      if (active) {
+        // 进入浏览器全屏 → 暂退 theater 并记住进入前的状态
+        resumeTheaterRef.current = theaterRef.current;
+        if (theaterRef.current) applyTheater(false);
+      } else if (resumeTheaterRef.current) {
+        // 退出浏览器全屏 → 恢复进入前状态
+        resumeTheaterRef.current = false;
+        applyTheater(true);
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, [applyTheater]);
+
+  // 网页全屏期间锁定底层页面滚动：滚轮在覆盖层上不再滚动背景文档，退出后页面位置不漂移
+  useEffect(() => {
+    if (!isTheaterMode) return;
+    const { body } = document;
+    const previousOverflow = body.style.overflow;
+    body.style.overflow = "hidden";
+    return () => {
+      body.style.overflow = previousOverflow;
+    };
+  }, [isTheaterMode]);
 
   /**
    * 归属成立的落位收敛——**本次 seek 的真实落位是唯一收敛判据**（审核 R7 统一原则）：
@@ -438,7 +476,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   useEffect(() => {
     if (!following || currentIndex < 0) return;
     const container = listRef.current;
-    const target = container?.querySelector<HTMLElement>(`[data-index="${currentIndex}"]`);
+    const target = container?.querySelector<HTMLElement>('[data-current="true"]');
     if (!container || !target) return;
     programmaticScrollRef.current = true;
     container.scrollTop = Math.max(0, target.offsetTop - container.clientHeight / 2);
@@ -597,6 +635,8 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     if (playing) {
       pauseReplay();
       setPlaying(false);
+      // 暂停即取消 idle：暂停态控件常显，恢复播放不得沿用暂停前的隐藏倒计时（FR-1 · 设计 §2.1）
+      setControlsIdle(false);
     } else {
       // 乐观置位；play() 被拒绝（自动播放策略等）时复位，避免假「暂停」按钮态（审核 次-1）
       setPlaying(true);
@@ -612,7 +652,17 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
     if (videoRef.current) videoRef.current.playbackRate = next;
   };
 
+  /**
+   * 全屏切换（FR-4 · 设计 §2.3）：已全屏 → 退出，未全屏 → 进入。
+   * 修复「全屏后再次点击无法退出」的根因：原实现无条件 `requestFullscreen()`，
+   * 重复请求被 `.catch` 静默吞掉（技术方案 §3.2 / 实现计划 T4）。
+   */
   const handleFullscreen = () => {
+    if (document.fullscreenElement) {
+      const exit = document.exitFullscreen;
+      if (typeof exit === "function") void exit.call(document).catch(() => {});
+      return;
+    }
     const container = containerRef.current;
     if (container && typeof container.requestFullscreen === "function") {
       void container.requestFullscreen().catch(() => {});
@@ -620,6 +670,29 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
   };
 
   const seekFailed = seekError !== null;
+  /** 控件浮层显隐（FR-1）：仅「播放中 + 静止超时」隐藏；暂停时恒常显（设计 §2.1）。 */
+  const controlsHidden = playing && controlsIdle;
+  /**
+   * 进度条预览气泡（FR-3 · 设计 §2.2）：拖动中的 draft 值优先显示、hover 让位；
+   * `ratio` 仅用于气泡跟随定位（0–1）。
+   */
+  const preview =
+    draftTime !== null
+      ? {
+          ratio: duration > 0 ? Math.min(1, Math.max(0, draftTime / duration)) : 0,
+          time: draftTime,
+        }
+      : hoverPreview;
+
+  /** 鼠标在进度条上移动 → 跟随指针的目标时间预览（仅 mouse 指针启用，touch 不显示）。 */
+  const handleProgressPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "mouse") return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const offsetX = Math.min(Math.max(event.clientX - rect.left, 0), rect.width);
+    const ratio = offsetX / rect.width;
+    setHoverPreview({ ratio, time: ratio * duration });
+  };
 
   return (
     <div className={styles.stage} data-testid="replay-stage">
@@ -638,7 +711,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
         </div>
       </header>
 
-      <div className={styles.layout}>
+      <div
+        className={isTheaterMode ? `${styles.layout} ${styles.theater}` : styles.layout}
+        data-theater={isTheaterMode ? "true" : "false"}
+      >
         <div
           className={styles.videoColumn}
           ref={containerRef}
@@ -651,7 +727,7 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               当前浏览器无法播放，请使用最新版 Chrome / Edge / Safari
             </div>
           ) : (
-            <div className={styles.videoArea}>
+            <div className={styles.videoArea} data-testid="video-area">
               <video
                 ref={videoRef}
                 aria-label="录播视频"
@@ -663,7 +739,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 onProgress={(event) => handleMediaEvent(event.currentTarget)}
                 onSeeked={handleSeeked}
                 onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
+                onPause={() => {
+                  setPlaying(false);
+                  setControlsIdle(false); // 任意暂停路径都回到「暂停常显」（FR-1）
+                }}
               />
               {Number.isFinite(recordStartMs) && (
                 <DanmakuOverlay
@@ -696,22 +775,10 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                   播放失败，请稍后重试。
                 </div>
               )}
-            </div>
-          )}
 
-          {loadError && supported !== false && (
-            <div className={styles.loadError} role="alert" data-testid="player-load-error">
-              <span>{PLAYER_LOAD_ERROR_MESSAGE}</span>
-              <button type="button" onClick={retryPlayerLoad}>
-                重试
-              </button>
-            </div>
-          )}
-
-          {supported !== false && (
             <div
-              className={playing && controlsIdle ? styles.controlsHidden : styles.controls}
-              data-controls={playing && controlsIdle ? "hidden" : "visible"}
+              className={controlsHidden ? styles.controlsHidden : styles.controls}
+              data-controls={controlsHidden ? "hidden" : "visible"}
               onMouseMove={revealControls}
               role="group"
               aria-label="播放控件"
@@ -720,7 +787,11 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 {playing ? <IconPause /> : <IconPlay />}
               </button>
 
-              <div className={styles.progressWrap}>
+              <div
+                className={styles.progressWrap}
+                onPointerMove={handleProgressPointerMove}
+                onPointerLeave={() => setHoverPreview(null)}
+              >
                 {/* 三段配色（设计 §2.5）：未加载 287-7 轨道 / 已缓冲 287-5（多区间多段） / 已播放 成员色 */}
                 <div className={styles.progressTrack} aria-hidden="true">
                   <div data-testid="buffered-bar" className={styles.bufferedBar}>
@@ -792,6 +863,17 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                     }
                   }}
                 />
+                {preview !== null && (
+                  <span
+                    className={styles.progressPreview}
+                    data-testid="progress-preview"
+                    aria-hidden="true"
+                    // 位置夹取交由 CSS clamp：按气泡半宽把左右边界收在进度条内，避免被画面 overflow 裁切
+                    style={{ "--preview-ratio": preview.ratio } as CSSProperties}
+                  >
+                    {formatOffset(preview.time)}
+                  </span>
+                )}
               </div>
               <span className={styles.time} aria-label="播放时间">
                 {formatOffset(currentTime)} / {formatOffset(duration)}
@@ -846,8 +928,23 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 ))}
               </select>
 
-              <button type="button" aria-label="全屏" onClick={handleFullscreen}>
-                <IconFullscreen />
+              <button
+                type="button"
+                className={styles.theaterButton}
+                aria-label="网页全屏"
+                aria-pressed={isTheaterMode}
+                onClick={() => applyTheater(!isTheaterMode)}
+              >
+                <IconTheater />
+              </button>
+
+              <button
+                type="button"
+                aria-label={isFullscreen ? "退出全屏" : "全屏"}
+                aria-pressed={isFullscreen}
+                onClick={handleFullscreen}
+              >
+                {isFullscreen ? <IconFullscreenExit /> : <IconFullscreen />}
               </button>
 
               <button
@@ -859,7 +956,18 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
                 弹幕{danmakuEnabled ? "开" : "关"}
               </button>
             </div>
+            </div>
           )}
+
+          {loadError && supported !== false && (
+            <div className={styles.loadError} role="alert" data-testid="player-load-error">
+              <span>{PLAYER_LOAD_ERROR_MESSAGE}</span>
+              <button type="button" onClick={retryPlayerLoad}>
+                重试
+              </button>
+            </div>
+          )}
+
         </div>
 
         <section className={styles.timeline} aria-label="事件列表">
@@ -892,17 +1000,13 @@ export function ReplayStage({ roomId, file, bounds, deps = {} }: ReplayStageProp
               <p className={styles.listState}>本场直播暂无弹幕事件</p>
             )}
             {entries.map((entry, index) => (
-              <button
-                key={entry.eventId}
-                type="button"
-                data-index={index}
-                data-current={index === currentIndex ? "true" : undefined}
-                className={index === currentIndex ? styles.entryCurrent : styles.entry}
-                onClick={() => seekTo(entry.offsetSeconds)}
-              >
-                <span className={styles.entryTime}>{formatOffset(entry.offsetSeconds)}</span>
-                <span className={styles.entryText}>{entryLabel(entry)}</span>
-              </button>
+              <EventFeedItem
+                key={entry.event.eventId}
+                event={entry.event}
+                offsetSeconds={entry.offsetSeconds}
+                current={index === currentIndex}
+                onSeek={seekTo}
+              />
             ))}
           </div>
         </section>
