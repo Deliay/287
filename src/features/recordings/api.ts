@@ -12,6 +12,7 @@ import type {
   RecordingFileInfo,
   RecordingStatusResponse,
   RoomRecordingsResponse,
+  SuperChatColors,
 } from "./types";
 
 /** 录播服务默认基址（生产）。 */
@@ -126,15 +127,31 @@ function parseRecordingFile(raw: unknown): RoomRecordingsResponse["files"][numbe
   };
 }
 
+/** SuperChat 配色十六进制校验（需求 §7 / 技术方案 §5-3：非 `#RRGGBB` 视为非法回退默认）。 */
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
 /**
  * 解析单条直播事件（审核次要1）：`eventId`/`type`/`occurredAt` 为必要字段（缺失跳过坏 item），
  * `sender` 内字段与 `medal`/`emote`/`gift`/`guard` 等结构按可缺省校验，失败降级为缺省值。
+ *
+ * 契约扩展（2026-09-25 实测，需求 §7）：
+ * - `scColors`（仅 super_chat）三字段须全为 `#RRGGBB` 合法色，否则整体置空；
+ * - `time`（悬停秒数）须为有限非负数，否则置空；
+ * - 上游信封类型 `gift_v2` 归一为 `gift`（字段同构，服务端已归一，防御性兼容）。
  */
 function parseLiveEvent(raw: unknown): LiveEvent | null {
   if (!isRecord(raw)) return null;
-  const { eventId, type, occurredAt, sender, content, emote, price, gift, guard } = raw;
+  const { eventId, type, occurredAt, sender, content, emote, price, scColors, time, gift, guard } = raw;
   if (typeof eventId !== "string") return null;
-  if (type !== "danmaku" && type !== "super_chat" && type !== "gift" && type !== "guard_buy") return null;
+  if (
+    type !== "danmaku" &&
+    type !== "super_chat" &&
+    type !== "gift" &&
+    type !== "guard_buy" &&
+    type !== "gift_v2"
+  ) {
+    return null;
+  }
   if (typeof occurredAt !== "string") return null;
   const rawSender = isRecord(sender) ? sender : {};
   const uid = typeof rawSender.uid === "number" ? rawSender.uid : 0;
@@ -144,7 +161,8 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
   const medal = parseMedal(rawSender.medal);
   const event: LiveEvent = {
     eventId,
-    type,
+    // gift_v2 → gift 归一（结构同构，渲染层无感知）
+    type: type === "gift_v2" ? "gift" : type,
     occurredAt,
     sender: { uid, name, face, medal, guardLevel },
   };
@@ -159,6 +177,9 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
     event.emote = { url: emote.url, name: emote.name, width: emote.width, height: emote.height };
   }
   if (typeof price === "number") event.price = price;
+  const parsedColors = parseScColors(scColors);
+  if (parsedColors) event.scColors = parsedColors;
+  if (typeof time === "number" && Number.isFinite(time) && time >= 0) event.time = time;
   if (isRecord(gift)) {
     if (typeof gift.name === "string" && typeof gift.count === "number" && typeof gift.iconUrl === "string") {
       event.gift = { name: gift.name, count: gift.count, iconUrl: gift.iconUrl };
@@ -170,6 +191,27 @@ function parseLiveEvent(raw: unknown): LiveEvent | null {
     }
   }
   return event;
+}
+
+/** SuperChat 配色结构校验：三字段须全为 `#RRGGBB`，任一不符整体降级为 undefined（不抛错）。 */
+function parseScColors(raw: unknown): SuperChatColors | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { backgroundStart, backgroundEnd, fontColor } = raw;
+  if (
+    typeof backgroundStart !== "string" ||
+    typeof backgroundEnd !== "string" ||
+    typeof fontColor !== "string"
+  ) {
+    return undefined;
+  }
+  if (
+    !HEX_COLOR_RE.test(backgroundStart) ||
+    !HEX_COLOR_RE.test(backgroundEnd) ||
+    !HEX_COLOR_RE.test(fontColor)
+  ) {
+    return undefined;
+  }
+  return { backgroundStart, backgroundEnd, fontColor };
 }
 
 /** 徽章信息结构校验：不符时降级为 null（不影响整条事件，审核次要1）。 */
